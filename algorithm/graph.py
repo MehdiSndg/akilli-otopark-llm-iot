@@ -26,14 +26,23 @@ from dataclasses import dataclass
 
 import config
 
-# Giriş/çıkış düğüm adları (sabit; geometriden bağımsız)
-ENTRANCES = ["ENTRANCE-0", "ENTRANCE-1"]
-EXITS = ["EXIT-0", "EXIT-1"]
+# Düğüm adları (sabit; geometriden bağımsız)
+# - ENTRANCES   : araç giriş kapıları (sürüş başlangıcı), çevrede farklı kenarlarda
+# - VEHICLE_EXITS: araç çıkış kapıları (araç ayrılırken gider; trafik animasyonu)
+# - EXITS       : AVM yaya kapıları (park sonrası yürüme hedefi) — üstte, AVM cephesinde
+ENTRANCES = ["ENTRANCE-0", "ENTRANCE-1", "ENTRANCE-2"]
+VEHICLE_EXITS = ["VEXIT-0", "VEXIT-1"]
+EXITS = ["MALL-0", "MALL-1", "MALL-2"]
 ENTRANCE = ENTRANCES[0]   # geriye dönük uyumluluk
 EXIT = EXITS[0]
 
-# Koordinat ölçeği: bir bant 4 mantıksal birim yer kaplar
-BAND_UNIT = 4
+# Koordinat ölçeği: bir bandın yüksekliği (mantıksal birim). Daha büyük değer =
+# satırlar ve sürüş yolları arasında daha ferah dikey boşluk.
+BAND_UNIT = 5.5
+# Sıralar bant merkezine yakın (arka-arkaya), böylece bantlar arasındaki SÜRÜŞ
+# YOLLARI geniş kalır (gerçek otoparklarda da iki sıra sırt sırtadır).
+ROW_UP = BAND_UNIT * 0.36      # üst sıra ofseti
+ROW_LOW = BAND_UNIT * 0.64     # alt sıra ofseti
 
 
 @dataclass
@@ -44,6 +53,7 @@ class ParkingSpot:
     x: float
     y: float
     zone: str          # "giriş yakını" | "çıkış yakını" | "orta"
+    face: str = "up"   # "up" = burnu üstteki yola, "down" = alttaki yola
     occupied: bool = False
 
 
@@ -150,8 +160,9 @@ def build_parking():
     # 3) Park yerleri: her bant = üst sıra + alt sıra; yere giriş ilgili aisle'dan
     for b in range(n_bands):
         for row in range(2):
-            y = b * BAND_UNIT + (1 if row == 0 else 3)
+            y = b * BAND_UNIT + (ROW_UP if row == 0 else ROW_LOW)
             access_aisle = b if row == 0 else b + 1
+            face = "up" if row == 0 else "down"
             for i, s in enumerate(stops):
                 if s["kind"] != "spot":
                     continue
@@ -160,38 +171,87 @@ def build_parking():
                 g.add_edge(spot_id, f"AISLE-{access_aisle}-{i}")
                 spots.append(ParkingSpot(
                     id=spot_id, node_id=spot_id, type=_spot_type(b, row, s["col"]),
-                    x=s["x"], y=float(y), zone=_zone(b),
+                    x=s["x"], y=float(y), zone=_zone(b), face=face,
                 ))
 
-    # 4) Çoklu giriş (alt köşeler) ve çıkış / AVM kapısı (üst köşeler)
+    # 4) Kapılar: araç girişleri (çevrede), araç çıkışları, AVM yaya kapıları (üstte)
     bottom = n_aisles - 1
     bottom_y = bottom * BAND_UNIT
+    mid = n_aisles // 2
     left_x = stops[0]["x"]
     right_x = stops[last_i]["x"]
 
-    g.add_node("ENTRANCE-0", left_x, bottom_y + 3)
-    g.add_edge("ENTRANCE-0", f"AISLE-{bottom}-0")
-    g.add_node("ENTRANCE-1", right_x, bottom_y + 3)
-    g.add_edge("ENTRANCE-1", f"AISLE-{bottom}-{last_i}")
+    def nearest_stop(frac):
+        """Genişliğin frac (0..1) konumuna en yakın 'road' durağının indexi."""
+        target = left_x + frac * (right_x - left_x)
+        return min(road_indices, key=lambda i: abs(stops[i]["x"] - target))
 
-    g.add_node("EXIT-0", left_x, -3)
-    g.add_edge("EXIT-0", "AISLE-0-0")
-    g.add_node("EXIT-1", right_x, -3)
-    g.add_edge("EXIT-1", f"AISLE-0-{last_i}")
+    gate_roads = []
+
+    # Araç girişleri (GİRİŞ): alt-sol, alt-sağ, sol-orta — farklı kenarlar
+    ent = [
+        ("ENTRANCE-0", left_x, bottom_y + 3, f"AISLE-{bottom}-0", "up"),
+        ("ENTRANCE-1", right_x, bottom_y + 3, f"AISLE-{bottom}-{last_i}", "up"),
+        ("ENTRANCE-2", left_x - 3, mid * BAND_UNIT, f"AISLE-{mid}-0", "right"),
+    ]
+    # Araç çıkışları (ÇIKIŞ): sağ-orta, alt-orta
+    vex_i = nearest_stop(0.5)
+    vex = [
+        ("VEXIT-0", right_x + 3, (mid - 1) * BAND_UNIT, f"AISLE-{mid - 1}-{last_i}", "right"),
+        ("VEXIT-1", stops[vex_i]["x"], bottom_y + 3, f"AISLE-{bottom}-{vex_i}", "down"),
+    ]
+    # AVM yaya kapıları (üst cephe): 3 nokta
+    doors = [
+        ("MALL-0", stops[nearest_stop(0.22)]["x"], -3, f"AISLE-0-{nearest_stop(0.22)}"),
+        ("MALL-1", stops[nearest_stop(0.5)]["x"], -3, f"AISLE-0-{nearest_stop(0.5)}"),
+        ("MALL-2", stops[nearest_stop(0.78)]["x"], -3, f"AISLE-0-{nearest_stop(0.78)}"),
+    ]
+
+    entrances_geom, vexits_geom, doors_geom = [], [], []
+    for nid, x, y, aisle, direction in ent:
+        g.add_node(nid, x, y)
+        g.add_edge(nid, aisle)
+        gate_roads.append((nid, aisle))
+        entrances_geom.append({"id": nid, "x": x, "y": y, "dir": direction})
+    for nid, x, y, aisle, direction in vex:
+        g.add_node(nid, x, y)
+        g.add_edge(nid, aisle)
+        gate_roads.append((nid, aisle))
+        vexits_geom.append({"id": nid, "x": x, "y": y, "dir": direction})
+    for nid, x, y, aisle in doors:
+        g.add_node(nid, x, y)
+        g.add_edge(nid, aisle)
+        gate_roads.append((nid, aisle))
+        doors_geom.append({"id": nid, "x": x, "y": y})
+
+    # Bölüm (section) kutuları: bant harfine göre, çizimde etiket + hafif çerçeve
+    spot_min_x = min(s.x for s in spots)
+    spot_max_x = max(s.x for s in spots)
+    sections = []
+    for b in range(n_bands):
+        letter = chr(ord("A") + b)
+        y0 = b * BAND_UNIT + ROW_UP - 0.9
+        y1 = b * BAND_UNIT + ROW_LOW + 0.9
+        sections.append({"label": letter, "x0": spot_min_x - 0.6, "x1": spot_max_x + 0.6,
+                         "y0": y0, "y1": y1})
+
+    # Park adaları kaldırıldı (kullanıcı isteği) — kenarda yalıtık duruyorlardı.
+    islands = []
 
     # 5) UI çizimi için geometri
     g.geom = {
         "stop_count": len(stops),
         "h_roads": [(f"AISLE-{a}-0", f"AISLE-{a}-{last_i}") for a in range(n_aisles)],
         "v_roads": [(f"AISLE-0-{i}", f"AISLE-{n_aisles - 1}-{i}") for i in road_indices],
-        "gate_roads": [
-            ("ENTRANCE-0", f"AISLE-{bottom}-0"),
-            ("ENTRANCE-1", f"AISLE-{bottom}-{last_i}"),
-            ("EXIT-0", "AISLE-0-0"),
-            ("EXIT-1", f"AISLE-0-{last_i}"),
-        ],
+        "gate_roads": gate_roads,
         "entrances": list(ENTRANCES),
+        "vehicle_exits": list(VEHICLE_EXITS),
         "exits": list(EXITS),
+        "entrances_geom": entrances_geom,
+        "vexits_geom": vexits_geom,
+        "doors_geom": doors_geom,
+        "sections": sections,
+        "islands": islands,
         "x_max": x_max,
     }
     return spots, g

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Akıllı Otopark Yönlendirme — LLM + IoT</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Sol: otopark görünümü -->
+    <section class="lot-panel">
+      <canvas id="lot"></canvas>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <!-- Sağ: asistan paneli -->
+    <aside class="side">
+      <header class="side-head">
+        <h1>Otopark Asistanı</h1>
+        <p class="subtitle">LLM + IoT akıllı yönlendirme</p>
+        <div class="clock" id="clock">—</div>
+      </header>
+
+      <div class="stats" id="stats">
+        <div class="stat"><span class="num" id="stat-total">—</span><span class="lab">Toplam</span></div>
+        <div class="stat occ"><span class="num" id="stat-occ">—</span><span class="lab">Dolu</span></div>
+        <div class="stat emp"><span class="num" id="stat-emp">—</span><span class="lab">Boş</span></div>
+      </div>
+
+      <div class="entrance-sel" id="entrance-sel">
+        <span class="field-label">Giriş kapısı</span>
+        <div class="seg" id="seg"></div>
+      </div>
+
+      <div class="chat" id="chat"></div>
+
+      <form class="composer" id="composer">
+        <input id="msg" type="text" autocomplete="off"
+               placeholder="Örn: Elektrikli arabam var, çıkışa yakın bir yer...">
+        <button type="submit" id="send">Gönder</button>
+      </form>
+    </aside>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

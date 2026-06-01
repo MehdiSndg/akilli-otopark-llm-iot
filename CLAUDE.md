@@ -191,78 +191,78 @@ küçük bir commit at ve sıradakine geç. Bir görev büyükse alt adımların
 tamamla.
 
 ### Faz 0 — Kurulum
-- [ ] **G0.1** Sanal ortam oluştur, `requirements.txt` yaz (pygame, paho-mqtt, pytest;
+- [x] **G0.1** Sanal ortam oluştur, `requirements.txt` yaz (pygame, paho-mqtt, pytest;
       LLM sağlayıcısına göre ollama/openai/anthropic), kur.
-- [ ] **G0.2** Klasör yapısını (Bölüm 4) iskelet olarak oluştur, her modüle boş/temel
+- [x] **G0.2** Klasör yapısını (Bölüm 4) iskelet olarak oluştur, her modüle boş/temel
       dosya koy.
-- [ ] **G0.3** `config.py` yaz: park yeri sayısı, tip dağılımı, MQTT host/port/topic,
+- [x] **G0.3** `config.py` yaz: park yeri sayısı, tip dağılımı, MQTT host/port/topic,
       LLM model adı/sağlayıcı, Pygame pencere boyutu gibi tüm sabitler burada.
-- [ ] **G0.4** `.env.example` ve `README.md` taslağı (kurulum + çalıştırma adımları).
-- [ ] **G0.5** Yerel Mosquitto broker'ın kurulu olduğunu doğrula (talimatı README'ye yaz).
+- [x] **G0.4** `.env.example` ve `README.md` taslağı (kurulum + çalıştırma adımları).
+- [x] **G0.5** Yerel Mosquitto broker'ın kurulu olduğunu doğrula (talimatı README'ye yaz).
 
 ### Faz 1 — IoT katmanı (Kişi A)
-- [ ] **G1.1** `backend/database.py`: SQLite şeması (park yerleri tablosu), tabloyu
+- [x] **G1.1** `backend/database.py`: SQLite şeması (park yerleri tablosu), tabloyu
       başlangıç verisiyle dolduran fonksiyon, güncelleme/sorgu fonksiyonları.
-- [ ] **G1.2** `simulator/sensor_simulator.py`: N park yerinin durumunu üreten döngü.
+- [x] **G1.2** `simulator/sensor_simulator.py`: N park yerinin durumunu üreten döngü.
       Başlangıçta rastgele doluluk; sonra zaman senaryosu (sabah dolar, akşam boşalır).
       Her durum değişikliğini MQTT topic'ine JSON olarak yayınla.
-- [ ] **G1.3** `backend/mqtt_client.py`: topic'e abone ol, gelen mesajı parse et,
+- [x] **G1.3** `backend/mqtt_client.py`: topic'e abone ol, gelen mesajı parse et,
       `database.py` üzerinden DB'yi güncelle.
-- [ ] **G1.4** `backend/parking_state.py`: o anki tüm doluluk durumunu (liste/dict)
+- [x] **G1.4** `backend/parking_state.py`: o anki tüm doluluk durumunu (liste/dict)
       döndüren sade bir okuma katmanı. Algoritma ve UI bunu kullanacak.
-- [ ] **G1.5** Manuel test: simülatörü ve mqtt_client'ı ayrı terminalde çalıştır,
+- [x] **G1.5** Manuel test: simülatörü ve mqtt_client'ı ayrı terminalde çalıştır,
       DB'nin güncellendiğini doğrula. Sonucu README'ye not düş.
 
 ### Faz 2 — Algoritma katmanı (Kişi B)
-- [ ] **G2.1** `algorithm/graph.py`: otoparkı graf olarak kur. Düğümler: giriş, çıkış,
+- [x] **G2.1** `algorithm/graph.py`: otoparkı graf olarak kur. Düğümler: giriş, çıkış,
       koridor kavşakları, park yerleri. Kenar ağırlıkları = mesafe. Park yeri
       ekran koordinatları graf düğümleriyle eşleşsin (UI ile tutarlı).
-- [ ] **G2.2** `algorithm/astar.py`: A* algoritması (saf Python). Başlangıç düğümünden
+- [x] **G2.2** `algorithm/astar.py`: A* algoritması (saf Python). Başlangıç düğümünden
       hedef düğüme en kısa yolu ve toplam mesafeyi döndür. Sezgisel: Öklid mesafesi.
-- [ ] **G2.3** `algorithm/allocator.py`: `find_best_parking_spot(vehicle_type,
+- [x] **G2.3** `algorithm/allocator.py`: `find_best_parking_spot(vehicle_type,
       preference, needs_charging)` fonksiyonu. Adımlar: (a) parking_state'ten boş
       yerleri al, (b) araç tipi/şarj ihtiyacına göre filtrele, (c) tercihe göre
       başlangıç/hedef düğümünü belirle, (d) her aday için A* mesafesini hesapla,
       (e) en küçük mesafeli yeri seç. Sonuç: spot_id, yol (düğüm listesi), mesafe.
 - [ ] **G2.4** (Bonus) Çoklu araç dengeli atama: aynı anda gelen birden çok araç için
       greedy atama; istersek Hungarian algoritması ile optimal atama.
-- [ ] **G2.5** `tests/test_astar.py` ve `tests/test_allocator.py`: bilinen küçük bir
+- [x] **G2.5** `tests/test_astar.py` ve `tests/test_allocator.py`: bilinen küçük bir
       grafta beklenen sonuçları doğrula.
 
 ### Faz 3 — LLM katmanı (Kişi B)
-- [ ] **G3.1** `llm/tools.py`: `find_best_parking_spot` için function calling JSON
+- [x] **G3.1** `llm/tools.py`: `find_best_parking_spot` için function calling JSON
       şemasını tanımla (parametreler, açıklamalar, enum değerleri).
-- [ ] **G3.2** `llm/client.py`: sağlayıcı soyutlaması. `chat(messages, tools)` arayüzü;
+- [x] **G3.2** `llm/client.py`: sağlayıcı soyutlaması. `chat(messages, tools)` arayüzü;
       altında Ollama (varsayılan) veya OpenAI/Anthropic. Sağlayıcı `config.py`'den seçilir.
-- [ ] **G3.3** `llm/orchestrator.py`: serbest metni al → LLM'e araçlarla gönder →
+- [x] **G3.3** `llm/orchestrator.py`: serbest metni al → LLM'e araçlarla gönder →
       LLM araç çağrısı yaparsa `allocator.find_best_parking_spot`'u çalıştır → sonucu
       LLM'e geri ver → doğal dil cevabı al. Hem yapılandırılmış sonucu hem metni döndür.
-- [ ] **G3.4** Hata yönetimi: LLM yanlış/eksik parametre verirse makul varsayılanlara
+- [x] **G3.4** Hata yönetimi: LLM yanlış/eksik parametre verirse makul varsayılanlara
       düş; uygun boş yer yoksa kullanıcıya nazikçe açıkla.
-- [ ] **G3.5** `tests/test_orchestrator.py`: birkaç örnek cümle ("engelli yerim
+- [x] **G3.5** `tests/test_orchestrator.py`: birkaç örnek cümle ("engelli yerim
       lazım", "şarjlı yer çıkışa yakın olsun") doğru parametrelere çözülüyor mu?
       (LLM çağrısı mock'lanabilir.)
 
 ### Faz 4 — Pygame arayüzü (Kişi B)
-- [ ] **G4.1** `ui/layout.py`: otopark ızgarasının ekran yerleşimi, renk paleti
+- [x] **G4.1** `ui/layout.py`: otopark ızgarasının ekran yerleşimi, renk paleti
       (boş=yeşil, dolu=kırmızı, önerilen=sarı/yanıp sönen, engelli/ev için ikon/renk),
       koordinat hesapları.
-- [ ] **G4.2** `ui/widgets.py`: metin giriş kutusu (klavye girişi), gönder butonu,
+- [x] **G4.2** `ui/widgets.py`: metin giriş kutusu (klavye girişi), gönder butonu,
       sohbet/cevap gösterim alanı. (Pygame'de hazır input yok, elle yaz.)
-- [ ] **G4.3** `ui/pygame_app.py`: ana döngü. Sol/üst tarafta otopark ızgarası
+- [x] **G4.3** `ui/pygame_app.py`: ana döngü. Sol/üst tarafta otopark ızgarası
       (parking_state'ten canlı), alt/sağda sohbet kutusu. Sürücü yazıp gönderince
       orchestrator çağrılır, dönen yer ızgarada vurgulanır.
-- [ ] **G4.4** Animasyon: önerilen yere giden yol (A* sonucu düğüm listesi) üzerinde
+- [x] **G4.4** Animasyon: önerilen yere giden yol (A* sonucu düğüm listesi) üzerinde
       bir araç ikonunu adım adım hareket ettir.
-- [ ] **G4.5** Canlı güncelleme: simülatör doluluk değiştirdikçe ızgara renkleri
+- [x] **G4.5** Canlı güncelleme: simülatör doluluk değiştirdikçe ızgara renkleri
       güncellensin (DB'yi periyodik oku ya da olay tetikle).
 
 ### Faz 5 — Entegrasyon (Birlikte)
-- [ ] **G5.1** `main.py`: simülatörü (ayrı thread/process), MQTT abonesini ve Pygame
+- [x] **G5.1** `main.py`: simülatörü (ayrı thread/process), MQTT abonesini ve Pygame
       uygulamasını tek komutla başlat. Kapanışta temiz sonlandır.
-- [ ] **G5.2** Uçtan uca akışı doğrula: araç gelir → metin → LLM → algoritma → görsel
+- [x] **G5.2** Uçtan uca akışı doğrula: araç gelir → metin → LLM → algoritma → görsel
       yönlendirme. En az 3 farklı senaryo (normal/engelli/elektrikli).
-- [ ] **G5.3** Hata ve uç durumlar: otopark dolu, geçersiz girdi, LLM/broker erişilemez.
+- [x] **G5.3** Hata ve uç durumlar: otopark dolu, geçersiz girdi, LLM/broker erişilemez.
 - [ ] **G5.4** README'yi tamamla: mimari şeması, kurulum, çalıştırma, ekran görüntüleri.
 
 ### Faz 6 — Sunum & teslim (Birlikte)
@@ -408,7 +408,44 @@ pytest
   ifadeleri yön tersine çevirir (çıkışa uzak = girişe yakın); hem SYSTEM_PROMPT hem
   keyword yedeği bunu uyguluyor.
 
-**Sıradaki:** Faz 5 — Entegrasyon, **G5.1** (main.py: her şeyi tek komutla başlat).
+**Faz 4-WEB — Web arayüzüne geçiş (kullanıcı kararı; pygame görseli yetersiz bulundu)**
+Görselleştirme katmanı web'e taşındı; backend (MQTT/SQLite/A*/Gemini) AYNEN korundu.
+- [x] web/server.py — FastAPI: statik sayfa + /api/layout + /api/state + WS /ws (canlı
+      doluluk) + POST /api/request (orchestrator). Backend thread'leri (simülatör + MQTT
+      abonesi) sunucu açılışında (lifespan) başlar.
+- [x] web/static (index.html + style.css + app.js) — Canvas tabanlı gerçekçi AVM otopark
+      haritası (modern koyu tema).
+- [x] graph.py zenginleştirildi: 3 araç girişi + 2 araç çıkışı + 3 AVM yaya kapısı;
+      geom (bölümler, AVM binası, kapı yönleri); bant yüksekliği BAND_UNIT=5.5 + spot.face.
+- [x] Görsel: AVM binası + yaya kapıları + zebra geçit, geniş yatay/dikey yollar + sarı
+      kesikli şerit + yön okları, beyaz şeritli cepler, dolu yerlerde üstten araç,
+      bölüm etiketleri (A–E). (Kenar peyzaj adaları kullanıcı isteğiyle kaldırıldı.)
+- [x] **Olay tabanlı trafik:** Hareket eden her araç GERÇEK bir doluluk olayına karşılık
+      gelir — yer dolunca araç girişten gelip park eder, boşalınca çıkışa gider
+      (dekoratif/rastgele trafik yok). Sağ şeritten sürüş.
+- [x] **Trafik modeli (hilesiz):** sürekli araç-takibi (öne mesafeye göre yumuşak
+      yavaşlama) + kavşak geçiş önceliği (sabit id kuralı); en küçük id daima ilerler →
+      kalıcı kilit (deadlock) matematiksel olarak imkânsız. Araçlar 0.70x.
+- [x] **Gün-içi doluluk:** sensor_simulator saate göre doluluk eğrisi üretir (gece boş,
+      öğle ~%82 + akşam zirve); bir simüle gün ~4 dk (config.DAY_LENGTH_SEC). SIM_STATE
+      saat+yoğunluk tutar; UI'da gösterilir.
+- NOT: Tarayıcı görselini Claude göremiyor → yerleşim pygame PNG ile, JS `node --check`
+      ile, API uçtan uca canlı test edildi. pygame UI (ui/) hâlâ duruyor ama BİRİNCİL
+      arayüz artık web. Çalıştırma: `python -m web.server` → http://127.0.0.1:8000
+
+**Faz 5 — Entegrasyon (web yoluyla büyük ölçüde tamamlandı)**
+- [x] G5.1 — Tek komutla başlatma web/server.py ile sağlanıyor (simülatör + MQTT abonesi
+      + UI birlikte). (main.py hâlâ eski pygame yolunu başlatıyor; istenirse web'e çevrilir.)
+- [x] G5.2 — Uçtan uca akış API ile doğrulandı: metin→Gemini function calling→allocator→
+      görsel yönlendirme (normal/engelli/ev, kalış süresi, sol/sağ giriş senaryoları).
+- [x] G5.3 — Hata/uç durumlar: broker kapalı→brokersız yedek; Gemini 429/503→keyword
+      yedeği + nazik not; uygun yer yok→nazik mesaj.
+- [ ] G5.4 — README'yi web mimarisiyle güncelle + ekran görüntüleri ekle.
+
+**Faz 6 — Sunum & teslim: henüz başlanmadı.**
+
+**Sıradaki:** G5.4 (README + ekran görüntüsü), sonra Faz 6 (sunum). İsteğe bağlı:
+main.py'yi web sunucusunu başlatacak şekilde sadeleştirme.
 
 ### Notlar / Kararlar
 - Python 3.12.10 kullanılıyor (plan 3.11+ diyordu, uyumlu).

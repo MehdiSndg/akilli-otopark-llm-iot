@@ -28,7 +28,7 @@ N_AISLES = 6                   # yatay araç yolu sayısı
 BLOCK_W = 6                    # bir bloktaki park sütunu sayısı
 N_BLOCKS_X = 4                 # yatayda blok sayısı (bloklar dikey yollarla ayrılır)
 SPOTS_PER_ROW = BLOCK_W * N_BLOCKS_X         # toplam park sütunu = 24
-ROAD_GAP = 1.5                 # bloklar arası / kenar dikey yol genişliği (mantıksal birim)
+ROAD_GAP = 2.2                 # bloklar arası / kenar dikey yol genişliği (geniş, gerçekçi)
 
 N_BANDS = N_AISLES - 1                       # park bandı sayısı (her biri 2 sıra)
 NUM_SPOTS = N_BANDS * 2 * SPOTS_PER_ROW      # toplam park yeri = 5*2*24 = 240
@@ -42,8 +42,9 @@ NUM_EV_SPOTS = 10              # Elektrikli şarjlı park yeri
 INITIAL_OCCUPANCY_RATE = 0.55
 
 # Simülatör davranışı
-SIM_INTERVAL_SEC = 3.0         # Her tur arası bekleme (saniye)
-SIM_CHANGES_PER_TICK = 2       # Her turda kaç park yerinin durumu değişsin
+SIM_INTERVAL_SEC = 1.0         # Her tur arası bekleme (saniye)
+SIM_CHANGES_PER_TICK = 2       # (geriye dönük) tur başına temel değişim sayısı
+DAY_LENGTH_SEC = 240           # Bir simüle günün gerçek saniye süresi (demo: 4 dk/gün)
 
 
 # ---------------------------------------------------------------------------
