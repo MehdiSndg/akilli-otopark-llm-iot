@@ -15,6 +15,7 @@ DEFAULTS = {
     "vehicle_type": "normal",
     "preference": "any",
     "needs_charging": False,
+    "duration_hours": None,        # belirtilmezse süreye göre yerleştirme yapılmaz
 }
 
 # Aracın nötr tanımı (client.py sağlayıcı formatına çevirir)
@@ -41,6 +42,12 @@ TOOL = {
             "type": "boolean",
             "description": "Sürücü şarj istiyor mu? Elektrikli araçlarda genelde true.",
         },
+        "duration_hours": {
+            "type": "integer",
+            "description": "Sürücünün tahmini kalış süresi (saat). Sürücü ne kadar "
+                           "kalacağını söylerse (ör. \"2 saat\", \"yarım gün\") bunu "
+                           "saate çevir; söylemezse bu parametreyi boş bırak.",
+        },
     },
     "required": ["vehicle_type", "preference", "needs_charging"],
 }
@@ -53,5 +60,10 @@ SYSTEM_PROMPT = (
     "Park yerine SEN karar vermezsin; kararı yönlendirme algoritması verir. "
     "Bilgi eksikse makul varsayılanlar kullan: araç tipi belirtilmemişse normal, "
     "tercih belirtilmemişse any, şarj belirtilmemişse false. "
-    "Elektrikli/şarj ima ediliyorsa vehicle_type=ev ve needs_charging=true yap."
+    "Elektrikli/şarj ima ediliyorsa vehicle_type=ev ve needs_charging=true yap. "
+    "Sürücü kalış süresini belirtirse (ör. \"2 saat\", \"bütün gün\") duration_hours'ı "
+    "saate çevirerek doldur; belirtmezse boş bırak. "
+    "Tercih yalnızca yakınlık ifade eder; sürücü bir noktadan UZAK olmak isterse "
+    "diğerine yakını seç: \"çıkışa uzak\" -> nearest_entrance, \"girişe uzak\" -> "
+    "nearest_exit."
 )

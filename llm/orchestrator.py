@@ -14,9 +14,22 @@ Hata yönetimi (G3.4):
   - LLM/broker erişilemezse anahtar-kelime tabanlı yedeğe ve şablon cevaba düşülür.
 """
 
+import re
+
 from algorithm import allocator
 from llm import tools
-from llm.client import get_client
+from llm.client import get_client, is_quota_error
+
+
+def _coerce_duration(value):
+    """Kalış süresini (saat) pozitif tamsayıya çek; geçersizse None."""
+    if value is None:
+        return None
+    try:
+        hours = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return hours if hours > 0 else None
 
 
 def _normalize_args(args):
@@ -33,11 +46,25 @@ def _normalize_args(args):
         out["preference"] = pref
 
     out["needs_charging"] = bool(args.get("needs_charging", False))
+    out["duration_hours"] = _coerce_duration(args.get("duration_hours"))
 
     # Tutarlılık: elektrikli araç şarj ister sayılır
     if out["vehicle_type"] == "ev":
         out["needs_charging"] = True
     return out
+
+
+def _extract_duration(text):
+    """Metinden kalış süresini (saat) çıkar: \"2 saat\", \"bütün gün\" vb."""
+    t = text.lower()
+    if any(w in t for w in ("bütün gün", "butun gun", "tüm gün", "tum gun", "tam gün")):
+        return 8
+    if any(w in t for w in ("yarım gün", "yarim gun")):
+        return 4
+    m = re.search(r"(\d+)\s*saat", t)
+    if m:
+        return _coerce_duration(m.group(1))
+    return None
 
 
 def _keyword_fallback(user_text):
@@ -51,10 +78,16 @@ def _keyword_fallback(user_text):
         args["vehicle_type"] = "ev"
         args["needs_charging"] = True
 
-    if any(w in t for w in ("çıkış", "cikis", "çıkışa")):
-        args["preference"] = "nearest_exit"
-    elif any(w in t for w in ("giriş", "giris", "girişe")):
-        args["preference"] = "nearest_entrance"
+    # "uzak" ifadesi yönü tersine çevirir: çıkışa uzak = girişe yakın (ve tersi)
+    far = any(w in t for w in ("uzak", "uzağa", "uzakta"))
+    mentions_exit = any(w in t for w in ("çıkış", "cikis", "çıkışa"))
+    mentions_entrance = any(w in t for w in ("giriş", "giris", "girişe"))
+    if mentions_exit:
+        args["preference"] = "nearest_entrance" if far else "nearest_exit"
+    elif mentions_entrance:
+        args["preference"] = "nearest_exit" if far else "nearest_entrance"
+
+    args["duration_hours"] = _extract_duration(user_text)
 
     return _normalize_args(args)
 
@@ -71,18 +104,24 @@ def _fallback_explanation(result, params):
     )
 
 
-def handle_request(user_text, spots=None, client=None):
+def handle_request(user_text, spots=None, client=None, entrance=None):
     """
     Sürücünün serbest metnini işleyip sonucu döndürür.
+
+    entrance: sürücünün fiziksel olarak girdiği kapı düğümü (UI'daki Sol/Sağ
+    giriş seçiminden gelir). Verilirse sürüş mesafesi YALNIZCA bu girişten
+    hesaplanır; None ise en yakın giriş kullanılır.
 
     Döner (dict):
         reply    : sürücüye gösterilecek doğal dil cevabı (str)
         result   : allocator sonucu (spot_id, path, distance, ...) ya da None
-        params   : kullanılan parametreler (vehicle_type, preference, needs_charging)
+        params   : kullanılan parametreler (vehicle_type, preference, ...)
         source   : "llm" | "fallback"  (parametreler nereden çıkarıldı)
     """
     client = client or get_client()
     source = "llm"
+    llm_failed = False         # extract çağrısı hata verdiyse explain'i boşuna deneme
+    quota_hit = False          # 429 ise kullanıcıya nazik not düş
 
     # 1) Parametreleri çıkar (LLM function calling; hata olursa keyword yedeği)
     try:
@@ -97,17 +136,29 @@ def handle_request(user_text, spots=None, client=None):
         print(f"[orchestrator] LLM erişilemedi, yedeğe düşülüyor: {e}")
         params = _keyword_fallback(user_text)
         source = "fallback"
+        llm_failed = True
+        quota_hit = is_quota_error(e)
+
+    # LLM süreyi atlamış olabilir; metinden yedek çıkarımla tamamla
+    if params.get("duration_hours") is None:
+        params["duration_hours"] = _extract_duration(user_text)
 
     # 2) Kararı algoritma verir (deterministik)
-    result = allocator.find_best_parking_spot(spots=spots, **params)
+    result = allocator.find_best_parking_spot(spots=spots, entrance=entrance, **params)
 
-    # 3) Sonucu doğal dille açıkla (LLM; hata olursa şablon)
-    try:
-        reply = client.explain(user_text, result, params)
-        if not reply:
-            reply = _fallback_explanation(result, params)
-    except Exception as e:
-        print(f"[orchestrator] açıklama alınamadı, şablona düşülüyor: {e}")
+    # 3) Sonucu doğal dille açıkla. LLM zaten başarısızsa (ör. kota) ikinci çağrıyı
+    #    boşuna deneyip kotayı yakma/bekleme — doğrudan şablon cevaba düş.
+    if llm_failed:
         reply = _fallback_explanation(result, params)
+        if quota_hit:
+            reply = "(LLM günlük kotası doldu, basit modda yanıtlıyorum.) " + reply
+    else:
+        try:
+            reply = client.explain(user_text, result, params)
+            if not reply:
+                reply = _fallback_explanation(result, params)
+        except Exception as e:
+            print(f"[orchestrator] açıklama alınamadı, şablona düşülüyor: {e}")
+            reply = _fallback_explanation(result, params)
 
     return {"reply": reply, "result": result, "params": params, "source": source}

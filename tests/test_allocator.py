@@ -5,7 +5,7 @@ Gerçek otopark yerleşimini kullanır ama doluluğu test içinde belirler
 (parking_state/DB'ye bağımlı olmadan). Böylece deterministik kontrol yapılır.
 """
 
-from algorithm.graph import build_parking
+from algorithm.graph import build_parking, ENTRANCES
 from algorithm import allocator
 
 
@@ -62,3 +62,43 @@ def test_preference_changes_choice():
     assert near_entrance["spot_id"] != near_exit["spot_id"]
     assert near_entrance["spot_id"] == "E-25"   # giriş sol-altta
     assert near_exit["spot_id"] == "A-20"       # çıkış üst-ortada
+
+
+def test_entrance_changes_choice():
+    # E-1 sol-altta, E-24 sağ-altta. Sürücünün girdiği kapı seçimi değiştirmeli.
+    spots = _spots_with_free({"E-1", "E-24"})
+    left = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                            entrance=ENTRANCES[0])
+    right = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                             entrance=ENTRANCES[1])
+    assert left["spot_id"] == "E-1"             # sol girişten en yakın
+    assert right["spot_id"] == "E-24"           # sağ girişten en yakın
+    # Yol gerçekten seçilen girişten başlamalı
+    assert left["path"][0] == ENTRANCES[0]
+    assert right["path"][0] == ENTRANCES[1]
+
+
+def test_short_stay_prefers_exit_zone():
+    # Üç bölgeden birer boş yer: kısa kalış çıkış yakınına gitmeli
+    spots = _spots_with_free({"E-1", "A-20", "C-1"})   # giriş / çıkış / orta
+    res = allocator.find_best_parking_spot("normal", "any", duration_hours=1,
+                                           spots=spots, entrance=ENTRANCES[0])
+    assert res["spot"]["zone"] == "çıkış yakını"
+    assert res["spot_id"] == "A-20"
+
+
+def test_long_stay_prefers_middle_zone():
+    # Uzun kalış orta bölgeye gitmeli
+    spots = _spots_with_free({"E-1", "A-20", "C-1"})
+    res = allocator.find_best_parking_spot("normal", "any", duration_hours=5,
+                                           spots=spots, entrance=ENTRANCES[0])
+    assert res["spot"]["zone"] == "orta"
+    assert res["spot_id"] == "C-1"
+
+
+def test_no_duration_picks_nearest_regardless_of_zone():
+    # Süre verilmezse bölge etkisi olmamalı; en yakın (giriş yakını) seçilmeli
+    spots = _spots_with_free({"E-1", "A-20", "C-1"})
+    res = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                           entrance=ENTRANCES[0])
+    assert res["spot_id"] == "E-1"

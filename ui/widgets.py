@@ -59,8 +59,8 @@ class InputBox:
         return None
 
     def draw(self, surface):
-        bg = (52, 56, 70) if self.enabled else (44, 46, 56)
-        border = config.COLOR_SUGGESTED if (self.active and self.enabled) else (90, 95, 110)
+        bg = (43, 47, 60) if self.enabled else (35, 38, 48)
+        border = config.COLOR_ACCENT if (self.active and self.enabled) else (74, 80, 96)
         pygame.draw.rect(surface, bg, self.rect, border_radius=8)
         pygame.draw.rect(surface, border, self.rect, width=2, border_radius=8)
 
@@ -97,11 +97,57 @@ class Button:
                 and self.rect.collidepoint(event.pos))
 
     def draw(self, surface):
-        color = (80, 130, 200) if self.enabled else (70, 73, 85)
+        color = config.COLOR_ACCENT if self.enabled else (62, 66, 80)
         pygame.draw.rect(surface, color, self.rect, border_radius=8)
         label = self.font.render(self.label, True, config.COLOR_TEXT)
         surface.blit(label, (self.rect.centerx - label.get_width() // 2,
                              self.rect.centery - label.get_height() // 2))
+
+
+class Segmented:
+    """Yan yana seçeneklerden birini seçtiren kontrol (ör. Sol giriş / Sağ giriş).
+
+    options: [(etiket, değer), ...]. Seçili seçenek accent ile vurgulanır.
+    value özelliği seçili değeri döndürür."""
+
+    def __init__(self, rect, font, options, selected=0):
+        self.rect = pygame.Rect(rect)
+        self.font = font
+        self.options = options
+        self.selected = selected
+
+    @property
+    def value(self):
+        return self.options[self.selected][1]
+
+    def handle_event(self, event):
+        """Tıklanan segmenti seç. Seçim değiştiyse True döner."""
+        if event.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(event.pos):
+            n = len(self.options)
+            seg_w = self.rect.width / n
+            idx = int((event.pos[0] - self.rect.x) // seg_w)
+            idx = max(0, min(n - 1, idx))
+            if idx != self.selected:
+                self.selected = idx
+                return True
+        return False
+
+    def draw(self, surface):
+        n = len(self.options)
+        seg_w = self.rect.width / n
+        pygame.draw.rect(surface, config.COLOR_CARD, self.rect, border_radius=8)
+        for i, (label, _) in enumerate(self.options):
+            seg = pygame.Rect(int(self.rect.x + i * seg_w), self.rect.y,
+                              int(seg_w), self.rect.height)
+            if i == self.selected:
+                pygame.draw.rect(surface, config.COLOR_ACCENT, seg.inflate(-6, -6),
+                                 border_radius=6)
+                tc = config.COLOR_TEXT
+            else:
+                tc = config.COLOR_TEXT_DIM
+            lbl = self.font.render(label, True, tc)
+            surface.blit(lbl, (seg.centerx - lbl.get_width() // 2,
+                               seg.centery - lbl.get_height() // 2))
 
 
 class ChatLog:
@@ -115,25 +161,39 @@ class ChatLog:
         self.messages.append((role, text))
 
     def draw(self, surface, rect):
+        """Mesajları balon (bubble) stilinde, en yeni en altta olacak şekilde çiz.
+
+        Sürücü mesajı sağa hizalı accent balon; sistem cevabı sola hizalı kart
+        balon; bilgi mesajı balonsuz sönük metin. Alandan taşan eski mesajlar
+        kırpılır (set_clip)."""
         x, y, w, h = rect
-        line_h = self.font.get_height() + 2
-        role_colors = {
-            "user": (130, 200, 255),
-            "system": config.COLOR_TEXT,
-            "info": config.COLOR_TEXT_DIM,
-        }
+        pad = 9
+        line_h = self.font.get_height() + 3
+        prev_clip = surface.get_clip()
+        surface.set_clip(pygame.Rect(x, y, w, h))
 
-        # Tüm satırları hazırla (en yeni en altta), sığan kadarını alttan göster
-        rendered = []
-        for role, text in self.messages:
-            prefix = {"user": "Sürücü: ", "system": "Sistem: ", "info": ""}[role]
-            for i, line in enumerate(wrap_text(prefix + text, self.font, w - 16)):
-                rendered.append((line, role_colors[role]))
-            rendered.append(("", role_colors[role]))  # mesajlar arası boşluk
+        yy = y + h
+        for role, text in reversed(self.messages):
+            max_w = int(w * 0.82) - 2 * pad
+            lines = wrap_text(text, self.font, max_w)
+            tw = max((self.font.size(ln)[0] for ln in lines), default=0)
+            bw = tw + 2 * pad
+            bh = len(lines) * line_h + 2 * pad
+            yy -= bh + 8
 
-        max_lines = h // line_h
-        visible = rendered[-max_lines:]
-        for i, (line, color) in enumerate(visible):
-            if line:
-                surface.blit(self.font.render(line, True, color),
-                             (x + 8, y + i * line_h))
+            if role == "user":
+                bx, bubble, tc = x + w - bw - 4, config.COLOR_ACCENT_DIM, config.COLOR_TEXT
+            elif role == "system":
+                bx, bubble, tc = x + 4, config.COLOR_CARD, config.COLOR_TEXT
+            else:  # info
+                bx, bubble, tc = x + 4, None, config.COLOR_TEXT_DIM
+
+            if bubble is not None:
+                pygame.draw.rect(surface, bubble, (bx, yy, bw, bh), border_radius=12)
+            for i, ln in enumerate(lines):
+                surface.blit(self.font.render(ln, True, tc),
+                             (bx + pad, yy + pad + i * line_h))
+            if yy <= y:
+                break
+
+        surface.set_clip(prev_clip)

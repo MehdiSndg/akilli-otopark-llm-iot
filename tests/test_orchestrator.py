@@ -5,7 +5,7 @@ LLM çağrısı mock'lanır (gerçek API/ağ gerekmez). Örnek cümlelerin doğr
 parametrelere çözülmesi, varsayılana düşme ve keyword yedeği test edilir.
 """
 
-from algorithm.graph import build_parking
+from algorithm.graph import build_parking, ENTRANCES
 from llm import orchestrator
 from llm.client import LLMClient
 
@@ -98,3 +98,57 @@ def test_no_spot_returns_polite_message():
     out = orchestrator.handle_request("yer ver", spots=spots, client=client)
     assert out["result"] is None
     assert out["reply"]   # nazik bir mesaj olmalı
+
+
+def test_duration_extracted_from_text_in_fallback():
+    # LLM araç çağırmazsa metinden "2 saat" -> duration_hours=2 çıkarılmalı
+    spots = _spots_with_free({"C-12"})
+    client = FakeClient(args=None)
+    out = orchestrator.handle_request("2 saat kalacağım", spots=spots, client=client)
+    assert out["params"]["duration_hours"] == 2
+
+
+def test_duration_backfilled_when_llm_omits_it():
+    # LLM süreyi atlasa bile metindeki "5 saat" yedek çıkarımla doldurulmalı
+    spots = _spots_with_free({"C-12"})
+    client = FakeClient(args={"vehicle_type": "normal", "preference": "any",
+                              "needs_charging": False})
+    out = orchestrator.handle_request("5 saat kalacağım bir yer ver",
+                                      spots=spots, client=client)
+    assert out["params"]["duration_hours"] == 5
+
+
+def test_far_from_exit_inverts_to_nearest_entrance():
+    # "çıkışa uzak" = çıkıştan uzak = girişe yakın olmalı (yön tersine çevrilir)
+    spots = _spots_with_free({"C-12"})
+    client = FakeClient(args=None)   # keyword yedeği
+    out = orchestrator.handle_request("çıkışa en uzak bir yer", spots=spots, client=client)
+    assert out["params"]["preference"] == "nearest_entrance"
+
+
+def test_quota_error_falls_back_with_note():
+    # LLM 429 (kota) verirse: keyword yedeği + cevapta nazik kota notu olmalı
+    spots = _spots_with_free({"A-10"})
+
+    class QuotaClient(LLMClient):
+        def extract_tool_call(self, user_text):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
+
+        def explain(self, user_text, result, params):   # çağrılmamalı
+            raise AssertionError("kota hatasında explain çağrılmamalı")
+
+    out = orchestrator.handle_request("elektrikli yer", spots=spots, client=QuotaClient())
+    assert out["source"] == "fallback"
+    assert out["result"]["spot"]["type"] == "ev_charging"
+    assert "kota" in out["reply"].lower()
+
+
+def test_entrance_passed_through_to_allocator():
+    # UI'dan gelen giriş seçimi sonucu etkilemeli (E-1 sol, E-24 sağ boş)
+    spots = _spots_with_free({"E-1", "E-24"})
+    client = FakeClient(args={"vehicle_type": "normal", "preference": "any",
+                              "needs_charging": False})
+    out = orchestrator.handle_request("yer ver", spots=spots, client=client,
+                                      entrance=ENTRANCES[1])
+    assert out["result"]["spot_id"] == "E-24"
+    assert out["result"]["path"][0] == ENTRANCES[1]

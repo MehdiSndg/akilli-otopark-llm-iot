@@ -42,7 +42,12 @@ def start_subscriber(stop_event=None):
     """Aboneyi başlat. stop_event yoksa bloklar (loop_forever); varsa thread dostu."""
     database.init_db()  # tablo + tohum hazır olsun
     client = _make_client()
-    client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
+    try:
+        client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
+    except OSError as e:
+        print(f"[mqtt] Broker'a bağlanılamadı ({config.MQTT_HOST}:{config.MQTT_PORT}). "
+              f"Mosquitto çalışmıyor olabilir; canlı güncelleme devre dışı. ({e})")
+        return
 
     if stop_event is None:
         client.loop_forever()

@@ -20,8 +20,18 @@ import config
 from llm import tools
 
 
+def is_quota_error(exc):
+    """Hata günlük kota/oran limiti (429) mı? Bunlarda yeniden denemek anlamsız."""
+    msg = str(exc)
+    return ("429" in msg or "RESOURCE_EXHAUSTED" in msg
+            or "quota" in msg.lower() or "rate limit" in msg.lower())
+
+
 def _retry_transient(fn, attempts=3, base_delay=1.0):
-    """Geçici hatalarda (503 aşırı yük) kısa beklemeyle birkaç kez yeniden dene."""
+    """Geçici hatalarda (503 aşırı yük) kısa beklemeyle birkaç kez yeniden dene.
+
+    Kota/oran limiti (429) geçici sayılmaz: beklemenin faydası yok (saatlerce
+    sürebilir), hemen yükselt ki çağıran keyword yedeğine düşsün."""
     last = None
     for i in range(attempts):
         try:
@@ -58,12 +68,15 @@ def _build_explain_prompt(user_text, result, params):
             "Sürücüye Türkçe, kısa ve nazik bir şekilde uygun yer bulunamadığını açıkla."
         )
     spot = result["spot"]
+    dur = (params or {}).get("duration_hours")
+    dur_line = f"- Tahmini kalış süresi: {dur} saat\n" if dur else ""
     return (
         f"Sürücü şöyle dedi: \"{user_text}\".\n"
         f"Yönlendirme algoritması şu yeri seçti:\n"
         f"- Park yeri: {result['spot_id']} (tip: {spot['type']}, bölge: {spot['zone']})\n"
         f"- Girişten sürüş mesafesi: {result['distance']} birim\n"
         f"- Park yerinden çıkışa yürüme: {result['walk_to_exit']} birim\n"
+        f"{dur_line}"
         "Bu sonucu sürücüye Türkçe, tek-iki cümlede, sıcak bir dille açıkla. "
         "Park yeri kimliğini ve çıkışa/girişe yakınlığı mutlaka belirt."
     )
@@ -86,9 +99,11 @@ class GeminiClient(LLMClient):
         """Nötr tools.TOOL tanımını Gemini formatına çevir."""
         from google.genai import types
         t = tools.TOOL
+        type_map = {"string": "STRING", "boolean": "BOOLEAN",
+                    "integer": "INTEGER", "number": "NUMBER"}
         props = {}
         for name, spec in t["parameters"].items():
-            gem_type = "STRING" if spec["type"] == "string" else "BOOLEAN"
+            gem_type = type_map.get(spec["type"], "STRING")
             kwargs = {"type": gem_type, "description": spec.get("description", "")}
             if "enum" in spec:
                 kwargs["enum"] = spec["enum"]

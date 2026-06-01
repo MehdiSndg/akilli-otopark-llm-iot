@@ -388,6 +388,25 @@ pytest
 - **Bayat DB düzeltmesi:** Düzen değişince eski parking.db koordinatları bayatlıyordu
   (her şey sola yığılıyordu). database.init_db artık **düzen imzası** tutuyor; imza
   değişince tabloyu otomatik yeniden tohumluyor.
+- **Revizyon v3 (kullanıcı geri bildirimi, 4 madde):**
+  (1) Hareket eden ambient araçlar tamamen kaldırıldı (sakin/profesyonel görünüm).
+  (2) **Canlı sayılar:** Mosquitto winget ile kuruldu; ayrıca simulator'a **brokersız
+  yedek** eklendi (broker yoksa doluluk doğrudan database.set_occupied ile yazılır),
+  böylece boş/dolu sayıları her durumda canlı değişir.
+  (3) **Giriş seçici:** Kapı seçimi artık makineye bırakılmıyor — sürücü UI'daki
+  widgets.Segmented ile **Sol/Sağ giriş** seçer; orchestrator.handle_request(entrance=)
+  → allocator yalnızca o girişten A* mesafesi hesaplar.
+  (4) **Kalış süresi skoru:** tools.py'ye duration_hours (integer) eklendi; client.py
+  integer/number şema eşlemesi; orchestrator hem LLM hem keyword/regex ("2 saat",
+  "bütün gün") ile süreyi çıkarır; allocator sözlüksel skor (bölge birincil, mesafe
+  ikincil) ile kısa kalış→"çıkış yakını", uzun kalış→"orta" bölgeye yönlendirir
+  (config.SHORT_STAY_MAX_HOURS / LONG_STAY_MIN_HOURS). Testler 14→**23**'e çıktı.
+- **Sağlamlık düzeltmeleri (kullanıcı hata bildirimi):** (a) Gemini ücretsiz katman
+  kotası (günde 20 istek) dolunca 429 alınıyordu; client.is_quota_error + orchestrator
+  artık 429'u yeniden denemiyor, ikinci (açıklama) çağrısını atlıyor ve cevaba nazik
+  "kota doldu, basit mod" notu ekliyor. (b) "çıkışa uzak"/"girişe uzak" gibi UZAK
+  ifadeleri yön tersine çevirir (çıkışa uzak = girişe yakın); hem SYSTEM_PROMPT hem
+  keyword yedeği bunu uyguluyor.
 
 **Sıradaki:** Faz 5 — Entegrasyon, **G5.1** (main.py: her şeyi tek komutla başlat).
 

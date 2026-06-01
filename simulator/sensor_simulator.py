@@ -20,6 +20,7 @@ import paho.mqtt.client as mqtt
 
 import config
 from algorithm.graph import build_parking
+from backend import database
 
 
 def _initial_state():
@@ -37,6 +38,32 @@ def _publish(client, spot_id, occupied):
     client.publish(config.MQTT_TOPIC, payload, qos=1)
 
 
+def _sleep_interruptible(interval, stop_event):
+    """interval kadar bekle ama stop_event set edilirse erken çık."""
+    waited = 0.0
+    while waited < interval and not (stop_event and stop_event.is_set()):
+        time.sleep(0.1)
+        waited += 0.1
+
+
+def _run_brokerless(state, spot_ids, stop_event, interval, changes):
+    """Broker yokken yedek: doluluk değişikliklerini doğrudan SQLite'a yaz.
+
+    Mosquitto çalışmadığında bile UI'daki boş/dolu sayıları canlı değişsin diye
+    sensör verisini MQTT yerine database.set_occupied ile DB'ye işler."""
+    # Başlangıç durumunu DB'ye senkronla
+    for sid, occ in state.items():
+        database.set_occupied(sid, occ)
+    print(f"[simulator] (brokersız) {len(state)} yer için başlangıç durumu DB'ye yazıldı")
+
+    while not (stop_event and stop_event.is_set()):
+        for sid in random.sample(spot_ids, k=min(changes, len(spot_ids))):
+            state[sid] = not state[sid]
+            database.set_occupied(sid, state[sid])
+        _sleep_interruptible(interval, stop_event)
+    print("[simulator] (brokersız) durduruldu")
+
+
 def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     """Simülatör döngüsü. stop_event verilirse set edilince temiz durur."""
     interval = config.SIM_INTERVAL_SEC if interval is None else interval
@@ -46,7 +73,13 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     spot_ids = list(state.keys())
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="otopark-sensor")
-    client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
+    try:
+        client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
+    except OSError as e:
+        print(f"[simulator] Broker'a bağlanılamadı ({config.MQTT_HOST}:{config.MQTT_PORT}). "
+              f"Mosquitto çalışmıyor olabilir; doluluk doğrudan DB'ye yazılacak. ({e})")
+        _run_brokerless(state, spot_ids, stop_event, interval, changes)
+        return
     client.loop_start()
 
     # Başlangıçta tam durumu yayınla (abone DB'yi senkronlasın)
@@ -62,11 +95,7 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
                 _publish(client, sid, state[sid])
                 print(f"[simulator] {sid} -> {'DOLU' if state[sid] else 'BOŞ'}")
 
-            # interval kadar bekle ama stop_event'e duyarlı kal
-            waited = 0.0
-            while waited < interval and not (stop_event and stop_event.is_set()):
-                time.sleep(0.1)
-                waited += 0.1
+            _sleep_interruptible(interval, stop_event)
     finally:
         client.loop_stop()
         client.disconnect()

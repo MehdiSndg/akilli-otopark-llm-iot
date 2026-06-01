@@ -47,6 +47,18 @@ SIM_CHANGES_PER_TICK = 2       # Her turda kaç park yerinin durumu değişsin
 
 
 # ---------------------------------------------------------------------------
+# Kalış süresine göre yerleştirme (turnover optimizasyonu)
+# ---------------------------------------------------------------------------
+# Kısa kalanlar çıkışa/AVM kapısına yakın (hızlı giriş-çıkış, az yürüme), uzun
+# kalanlar ortaya (kapı yakınını kısa kalanlara bırak) yerleştirilir. Süre
+# verildiğinde allocator önce UYGUN BÖLGEYİ seçer, o bölge içinde en yakın yere
+# yönlendirir (sözlüksel skor: bölge birincil, mesafe ikincil). Uygun bölgede
+# boş yer yoksa mesafeye göre en iyi yere düşer.
+SHORT_STAY_MAX_HOURS = 2       # <= bu saat: kısa kalış -> "çıkış yakını" tercih
+LONG_STAY_MIN_HOURS = 4        # >= bu saat: uzun kalış -> "orta" tercih
+
+
+# ---------------------------------------------------------------------------
 # MQTT (sensör -> broker -> backend)
 # ---------------------------------------------------------------------------
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
@@ -91,29 +103,35 @@ WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 820
 FPS = 60
 
-# Renk paleti (R, G, B)
-COLOR_BG = (24, 26, 32)            # pencere arka planı
-COLOR_PANEL = (38, 41, 51)         # sohbet paneli arka planı
-COLOR_LOT_BG = (58, 64, 73)        # otopark zemini (park adaları / refüj)
-COLOR_ASPHALT = (33, 35, 41)       # araç yolları (koyu asfalt, belirgin)
-COLOR_LANE = (228, 196, 78)        # yol orta şerit çizgisi (sarı kesikli)
-COLOR_SLOT = (72, 79, 90)          # boş park yuvası zemini (zeminden açık)
-COLOR_PAINT = (216, 220, 228)      # beyaz park şerit çizgileri
-COLOR_EMPTY = (70, 200, 100)       # boş normal yer vurgusu -> yeşil
-COLOR_OCCUPIED = (200, 65, 65)     # (lejant) dolu -> kırmızı
-COLOR_SUGGESTED = (250, 225, 55)   # önerilen yer -> sarı (yanıp söner)
-COLOR_DISABLED = (60, 130, 230)    # engelli yer -> mavi
-COLOR_EV = (95, 200, 150)          # elektrikli yer -> yeşil-turkuaz
-COLOR_ENTRANCE = (90, 205, 120)    # giriş işareti
-COLOR_EXIT = (240, 175, 60)        # çıkış (AVM kapısı) işareti
-COLOR_CAR = (250, 215, 60)         # yönlendirilen (asıl) araç -> sarı
-COLOR_TEXT = (235, 235, 235)
-COLOR_TEXT_DIM = (158, 164, 180)
-COLOR_PATH = (250, 225, 55)        # önerilen rota çizgisi
+# Renk paleti (R, G, B) — modern koyu "slate" tema.
+# İlke: zemin nötr kalır, renk yalnızca ANLAM taşır (önerilen yer, araç, kapılar).
+# Böylece 240 yer kalabalık değil, sakin ve okunur görünür.
+COLOR_BG = (18, 20, 27)            # pencere arka planı (derin slate)
+COLOR_PANEL = (27, 30, 40)         # sağ panel arka planı
+COLOR_CARD = (37, 41, 53)          # panel içi kartlar / sohbet balonu
+COLOR_LOT_BG = (33, 37, 47)        # otopark zemini (park adaları / refüj)
+COLOR_ASPHALT = (23, 25, 32)       # araç yolları (koyu, sakin asfalt)
+COLOR_LANE = (104, 112, 130)       # yol orta şeridi (nötr gri, ince — sarı değil)
+COLOR_SLOT = (51, 56, 68)          # boş park yuvası zemini
+COLOR_PAINT = (92, 100, 116)       # park şerit çizgileri (yumuşak beyaz)
+COLOR_ACCENT = (74, 162, 222)      # tek vurgu rengi (mavi-teal)
+COLOR_ACCENT_DIM = (46, 86, 120)   # vurgunun sönük tonu (sohbet balonu vb.)
+COLOR_EMPTY = (70, 190, 110)       # (lejant) boş normal yer
+COLOR_OCCUPIED = (172, 78, 82)     # (lejant) dolu -> mat kırmızı
+COLOR_SUGGESTED = (245, 200, 70)   # önerilen yer -> amber (tek yer olduğu için öne çıkar)
+COLOR_DISABLED = (74, 134, 206)    # engelli yer -> mavi
+COLOR_EV = (78, 182, 150)          # elektrikli yer -> teal-yeşil
+COLOR_ENTRANCE = (88, 190, 122)    # giriş işareti
+COLOR_EXIT = (226, 160, 72)        # çıkış (AVM kapısı) işareti
+COLOR_CAR = (245, 205, 80)         # yönlendirilen (asıl) araç -> amber
+COLOR_TEXT = (228, 232, 240)
+COLOR_TEXT_DIM = (138, 146, 164)
+COLOR_PATH = (245, 200, 70)        # önerilen rota çizgisi (amber)
 
-# Park etmiş araçlar için çeşitli gövde renkleri (gerçekçi görünüm)
+# Park etmiş araçlar için MAT/desatüre gövde renkleri (lot sakin okunsun diye
+# bilinçli olarak düşük doygunluk; renk dikkati önerilen yerden çalmasın).
 CAR_COLORS = [
-    (180, 190, 200), (90, 110, 140), (150, 60, 60), (60, 90, 130),
-    (200, 200, 205), (70, 80, 90), (120, 70, 100), (80, 120, 110),
-    (160, 120, 70), (110, 130, 150),
+    (120, 128, 142), (98, 110, 128), (132, 98, 102), (92, 114, 132),
+    (146, 150, 160), (106, 112, 124), (114, 102, 124), (98, 126, 118),
+    (140, 122, 98), (110, 122, 138),
 ]

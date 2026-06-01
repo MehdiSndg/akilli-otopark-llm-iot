@@ -16,14 +16,12 @@ boyunca yönüne dönerek o yere sürer.
 
 import math
 import queue
-import random
 import threading
 
 import pygame
 
 import config
-from algorithm.graph import build_parking, ENTRANCES, EXITS
-from algorithm.astar import a_star
+from algorithm.graph import build_parking, ENTRANCES
 from backend import database, parking_state
 from llm import orchestrator
 from ui import layout, widgets, sprites
@@ -117,73 +115,6 @@ class MovingCar:
         sprites.draw_car(surface, p, self.color, self.length, self.width, self.angle)
 
 
-class AmbientCar:
-    """Sürekli dolaşan tek araç: hedefe varınca o noktadan yeni rota seçer (ışınlanmaz)."""
-
-    def __init__(self, graph, tf, length, width, gates, offset):
-        self.graph = graph
-        self.tf = tf
-        self.length = length
-        self.width = width
-        self.gates = gates
-        self.offset = offset
-        self.color = random.choice(config.CAR_COLORS)
-        self.node = self._rand_aisle()
-        self.mover = None
-        self._reroute()
-
-    def _rand_aisle(self):
-        a = random.randint(0, config.N_AISLES - 1)
-        i = random.randint(0, self.graph.geom["stop_count"] - 1)
-        return f"AISLE-{a}-{i}"
-
-    def _rand_dest(self):
-        # Bazen kapıya git (giren/çıkan trafik), çoğunlukla rastgele bir yol noktası
-        if random.random() < 0.4:
-            return random.choice(self.gates)
-        return self._rand_aisle()
-
-    def _reroute(self):
-        for _ in range(8):
-            dest = self._rand_dest()
-            if dest == self.node:
-                continue
-            path, _ = a_star(self.graph, self.node, dest)
-            if path and len(path) >= 2:
-                pts = [self.tf.to_screen(*self.graph.position(n)) for n in path]
-                self.mover = MovingCar(pts, random.uniform(120, 195), self.color,
-                                       self.length, self.width, self.offset)
-                self.node = dest
-                return
-        p = self.tf.to_screen(*self.graph.position(self.node))
-        self.mover = MovingCar([p, p], 120, self.color, self.length, self.width, self.offset)
-
-    def update(self, dt):
-        self.mover.update(dt)
-        if self.mover.done:
-            self._reroute()
-
-    def draw(self, surface):
-        self.mover.draw(surface)
-
-
-class AmbientTraffic:
-    def __init__(self, graph, tf, count=12):
-        length = max(int(1.5 * tf.scale), 12)
-        width = max(int(0.66 * tf.scale), 7)
-        offset = tf.scale * 0.42
-        gates = ENTRANCES + EXITS
-        self.cars = [AmbientCar(graph, tf, length, width, gates, offset) for _ in range(count)]
-
-    def update(self, dt):
-        for c in self.cars:
-            c.update(dt)
-
-    def draw(self, surface):
-        for c in self.cars:
-            c.draw(surface)
-
-
 # ---------------------------------------------------------------------------
 # Çizim
 # ---------------------------------------------------------------------------
@@ -224,10 +155,11 @@ def _draw_lot(surface, graph, tf):
         strip(n1, n2)
     for n1, n2 in geom["v_roads"]:
         strip(n1, n2)
-    for n1, n2 in geom["h_roads"] + geom["v_roads"]:
+    # Şerit çizgisi yalnızca ana yatay yollarda + ince/nötr (gürültüyü azaltır)
+    for n1, n2 in geom["h_roads"]:
         _dashed_line(surface, config.COLOR_LANE,
                      tf.to_screen(*graph.position(n1)),
-                     tf.to_screen(*graph.position(n2)), 2)
+                     tf.to_screen(*graph.position(n2)), 1, dash=9, gap=12)
 
 
 def _draw_spots(surface, spots, tf, suggested_id, flash_on):
@@ -279,22 +211,41 @@ def _draw_markers(surface, graph, tf, font):
         surface.blit(lab, (x - lab.get_width() // 2, y - 22))
 
 
-def _draw_legend(surface, x, y, font):
+def _draw_stat_cards(surface, x, y, w, num_font, lab_font, total, occ, empty):
+    """Üç istatistik kartı (Toplam / Dolu / Boş) — accent şeritli, kart zeminli."""
+    gap = 10
+    cw = (w - 2 * gap) // 3
+    data = [
+        ("Toplam", total, config.COLOR_ACCENT),
+        ("Dolu", occ, config.COLOR_OCCUPIED),
+        ("Boş", empty, config.COLOR_EMPTY),
+    ]
+    for i, (label, value, accent) in enumerate(data):
+        cx = x + i * (cw + gap)
+        pygame.draw.rect(surface, config.COLOR_CARD, (cx, y, cw, 56), border_radius=10)
+        pygame.draw.rect(surface, accent, (cx, y + 11, 3, 34), border_radius=2)
+        surface.blit(num_font.render(str(value), True, config.COLOR_TEXT), (cx + 14, y + 6))
+        surface.blit(lab_font.render(label, True, config.COLOR_TEXT_DIM), (cx + 14, y + 34))
+
+
+def _draw_legend(surface, x, y, w, font):
     items = [
         (config.COLOR_SLOT, "Boş yer", True),
-        (config.CAR_COLORS[2], "Dolu (araç)", False),
+        (config.CAR_COLORS[0], "Dolu (araç)", False),
         (config.COLOR_EV, "Şarjlı (boş)", False),
         (config.COLOR_DISABLED, "Engelli (boş)", False),
         (config.COLOR_SUGGESTED, "Önerilen yer", False),
         (config.COLOR_CAR, "Sizin aracınız", False),
     ]
+    col_w = w // 2
     for i, (color, label, outline) in enumerate(items):
-        by = y + i * 22
-        box = pygame.Rect(x, by, 16, 16)
+        bx = x + (i % 2) * col_w
+        by = y + (i // 2) * 22
+        box = pygame.Rect(bx, by, 14, 14)
         pygame.draw.rect(surface, color, box, border_radius=3)
         if outline:
             pygame.draw.rect(surface, config.COLOR_PAINT, box, width=1, border_radius=3)
-        surface.blit(font.render(label, True, config.COLOR_TEXT_DIM), (x + 24, by))
+        surface.blit(font.render(label, True, config.COLOR_TEXT_DIM), (bx + 20, by - 1))
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +266,15 @@ def run(start_backend=True, max_frames=None):
 
     _, graph = build_parking()
     tf = layout.build_transform(graph)
-    ambient = AmbientTraffic(graph, tf, count=12)
 
     cx, cy, cw, ch = layout.CHAT_RECT
+    ix, iw = cx + 18, cw - 36
     input_box = widgets.InputBox((cx + 10, cy + ch - 50, cw - 130, 40), font)
     send_btn = widgets.Button((cx + cw - 110, cy + ch - 50, 100, 40), font, "Gönder")
+    entrance_sel = widgets.Segmented(
+        (ix, cy + 224, iw, 32), small,
+        [("Sol giriş", ENTRANCES[0]), ("Sağ giriş", ENTRANCES[1])],
+    )
     chat = widgets.ChatLog(small)
     chat.add("info", "Merhaba! Nasıl bir park yeri istediğinizi yazın.")
     chat.add("info", "Örn: \"Elektrikli arabam var, çıkışa yakın bir yer istiyorum\".")
@@ -338,12 +293,14 @@ def run(start_backend=True, max_frames=None):
         nonlocal processing
         processing = True
         input_box.enabled = send_btn.enabled = False
-        chat.add("user", text)
+        entrance = entrance_sel.value
+        side = entrance_sel.options[entrance_sel.selected][0]
+        chat.add("user", f"{text}  ({side})")
         chat.add("info", "Düşünüyor...")
 
         def worker():
             try:
-                out = orchestrator.handle_request(text)
+                out = orchestrator.handle_request(text, entrance=entrance)
             except Exception as e:
                 out = {"error": str(e)}
             result_queue.put(out)
@@ -360,6 +317,7 @@ def run(start_backend=True, max_frames=None):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            entrance_sel.handle_event(event)
             submitted = input_box.handle_event(event)
             if submitted and not processing:
                 submit(submitted)
@@ -392,7 +350,6 @@ def run(start_backend=True, max_frames=None):
             refresh_timer = 0.0
             spots_state = parking_state.get_state()
 
-        ambient.update(dt)
         if assigned_car:
             assigned_car.update(dt)
 
@@ -400,21 +357,26 @@ def run(start_backend=True, max_frames=None):
         screen.fill(config.COLOR_BG)
         _draw_lot(screen, graph, tf)
         _draw_spots(screen, spots_state, tf, suggested_id, flash_on)
-        ambient.draw(screen)
         if path_points:
             pygame.draw.lines(screen, config.COLOR_PATH, False, path_points, 3)
         _draw_markers(screen, graph, tf, small)
         if assigned_car:
             assigned_car.draw(screen)
 
-        pygame.draw.rect(screen, config.COLOR_PANEL, layout.CHAT_RECT, border_radius=10)
+        pygame.draw.rect(screen, config.COLOR_PANEL, layout.CHAT_RECT, border_radius=14)
         total, occ, empty = parking_state.summary()
+        # Başlık + accent nokta
+        pygame.draw.circle(screen, config.COLOR_ACCENT, (ix + 5, cy + 26), 5)
         screen.blit(title_font.render("Otopark Asistanı", True, config.COLOR_TEXT),
-                    (cx + 12, cy + 12))
-        screen.blit(small.render(f"Toplam {total} · Dolu {occ} · Boş {empty}",
-                                 True, config.COLOR_TEXT_DIM), (cx + 12, cy + 42))
-        _draw_legend(screen, cx + 14, cy + 70, small)
-        chat.draw(screen, (cx, cy + 210, cw, ch - 210 - 60))
+                    (ix + 18, cy + 15))
+        screen.blit(small.render("LLM + IoT yönlendirme", True, config.COLOR_TEXT_DIM),
+                    (ix + 18, cy + 44))
+        _draw_stat_cards(screen, ix, cy + 74, iw, title_font, small, total, occ, empty)
+        _draw_legend(screen, ix, cy + 132, iw, small)
+        screen.blit(small.render("Hangi kapıdan girdiniz?", True, config.COLOR_TEXT_DIM),
+                    (ix, cy + 202))
+        entrance_sel.draw(screen)
+        chat.draw(screen, (cx + 6, cy + 264, cw - 12, ch - 264 - 64))
         input_box.placeholder = "Düşünüyor..." if processing else "Mesajınızı yazın..."
         input_box.draw(screen)
         send_btn.draw(screen)

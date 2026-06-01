@@ -14,6 +14,7 @@ Adımlar:
       A* ile hesapla, (d) tercihe göre en uygun yeri seç, (e) sonucu döndür.
 """
 
+import config
 from algorithm.graph import build_parking, ENTRANCES, EXITS
 from algorithm.astar import a_star
 from backend import parking_state
@@ -22,14 +23,32 @@ from backend import parking_state
 _SPOTS, _GRAPH = build_parking()
 
 
-def _best_drive(node):
-    """En yakın girişten park yerine en kısa yol ve mesafe. (path, dist)."""
+def _best_drive(node, entrance=None):
+    """Girişten park yerine en kısa yol ve mesafe. (path, dist).
+
+    entrance verilirse yalnızca o girişten hesaplanır (sürücünün fiziksel
+    girdiği kapı); aksi halde en yakın giriş seçilir."""
+    gates = [entrance] if entrance else ENTRANCES
     best_path, best = None, float("inf")
-    for gate in ENTRANCES:
+    for gate in gates:
         path, dist = a_star(_GRAPH, gate, node)
         if dist < best:
             best, best_path = dist, path
     return best_path, best
+
+
+def _preferred_zone(duration_hours):
+    """Kalış süresine göre tercih edilen bölge. None = süre etkisi yok.
+
+    Kısa kalış çıkışa/kapıya yakın (hızlı giriş-çıkış), uzun kalış ortaya
+    (kapı trafiğini şişirmesin) yönlendirilir. Aradaki süreler nötr bırakılır."""
+    if duration_hours is None:
+        return None
+    if duration_hours <= config.SHORT_STAY_MAX_HOURS:
+        return "çıkış yakını"
+    if duration_hours >= config.LONG_STAY_MIN_HOURS:
+        return "orta"
+    return None
 
 
 def _best_walk(node):
@@ -54,9 +73,19 @@ def _filter_candidates(empty_spots, vehicle_type, needs_charging):
 
 
 def find_best_parking_spot(vehicle_type="normal", preference="any",
-                           needs_charging=False, spots=None):
+                           needs_charging=False, duration_hours=None,
+                           entrance=None, spots=None):
     """
     Sürücü isteğine en uygun boş park yerini bulur.
+
+    entrance      : sürücünün girdiği kapı düğümü (None = en yakın giriş).
+    duration_hours: tahmini kalış süresi; verilirse uygun olmayan bölgedeki
+                    yerlere config.ZONE_PENALTY eklenerek turnover optimize edilir.
+
+    Skor (sözlüksel, küçük = iyi): (bölge_uymazlığı, temel_mesafe). Süre verilirse
+    önce uygun bölge (kısa->çıkış yakını, uzun->orta) seçilir, o bölge içinde en
+    yakın yere gidilir; uygun bölgede yer yoksa mesafeye göre en iyiye düşülür.
+    Temel mesafe tercihe göre sürüş ya da çıkışa yürümedir.
     Döner: {spot_id, path, distance, walk_to_exit, spot} ya da None.
     """
     all_spots = parking_state.get_state() if spots is None else spots
@@ -67,15 +96,18 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
         return None
 
     use_walk = (preference == "nearest_exit")
+    pref_zone = _preferred_zone(duration_hours)
     best = None
-    best_key = float("inf")
+    best_key = None
 
     for s in candidates:
         node = s["node_id"]
-        drive_path, drive = _best_drive(node)     # en yakın girişten sürüş
-        walk = _best_walk(node)                   # en yakın çıkışa yürüme
-        key = walk if use_walk else drive
-        if key < best_key:
+        drive_path, drive = _best_drive(node, entrance)   # girişten sürüş
+        walk = _best_walk(node)                           # en yakın çıkışa yürüme
+        base = walk if use_walk else drive
+        zone_miss = 1 if (pref_zone and s["zone"] != pref_zone) else 0
+        key = (zone_miss, base)                           # bölge birincil, mesafe ikincil
+        if best_key is None or key < best_key:
             best_key = key
             best = {
                 "spot_id": s["id"],
