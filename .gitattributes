@@ -1,0 +1,3 @@
+# Satır sonlarını normalize et (Windows/Linux/macOS arasında tutarlı)
+* text=auto eol=lf
+*.png binary

@@ -1,0 +1,420 @@
+# CLAUDE.md — LLM-IoT Entegrasyonu: Algoritma Destekli Akıllı Otopark Yönlendirme Sistemi
+
+Bu dosya, Claude Code'un bu projede nasıl çalışacağını yöneten ana yönerge dosyasıdır.
+Her oturumda önce bu dosyayı oku, hangi görevde kaldığımızı `## İlerleme Durumu`
+bölümünden kontrol et ve sıradaki göreve devam et.
+
+---
+
+## 1. Proje Özeti
+
+Yapay Zeka ve Veri Mühendisliği bölümünde okuyan 2 öğrencinin "Nesnelerin Yapay
+Zekası (IoT)" dersi için yaptığı dönem projesi.
+
+Akıllı bir otopark yönlendirme sistemi geliştiriyoruz. Sürücü doğal dille konuşur
+(örn. "elektrikli arabam var, çıkışa yakın bir yer istiyorum"). Bir LLM bu isteği
+anlar, **function calling** ile yönlendirme algoritmasını çağırır, algoritma graf
+üzerinde en uygun boş park yerini bulur ve sonuç sürücüye hem doğal dille açıklanır
+hem de bir Pygame penceresinde görsel olarak gösterilir.
+
+**Teslim:** Çalışan prototip + sunum. Tamamen yazılım (gerçek donanım yok, sensörler
+simüle edilir).
+
+### Projenin üç katmanı
+- **IoT katmanı:** Park yeri doluluk sensörlerinin simülasyonu + MQTT ile veri yayını.
+- **Algoritma katmanı:** Graf üzerinde A* ile en uygun yerin bulunması, araç tipine
+  ve sürücü tercihine göre filtreleme, çoklu araç için atama.
+- **LLM katmanı:** Doğal dil isteğini function calling ile yapılandırılmış parametreye
+  çevirme ve sonucu doğal dille açıklama.
+
+### Demoda gösterilecek senaryo
+Bir araç otopark girişine gelir → sürücü doğal dille tercihini yazar → sistem en uygun
+yeri bulur → Pygame penceresinde otopark ızgarası, dolu/boş yerler, önerilen yerin
+vurgulanması ve aracın o yere ilerlemesi animasyonla gösterilir.
+
+---
+
+## 2. Mimari
+
+```
+┌──────────────────────┐     MQTT      ┌─────────────────────────┐
+│  Sensör Simülatörü   │ ────────────► │        Backend          │
+│  (park yeri durumu)  │   (paho-mqtt) │  - MQTT abonesi         │
+└──────────────────────┘               │  - SQLite (doluluk)     │
+                                        │  - Algoritma modülü     │
+┌──────────────────────┐               │  - LLM modülü           │
+│   Pygame Arayüzü     │ ◄───────────► │  (FastAPI opsiyonel)    │
+│  - otopark ızgarası  │   fonksiyon   └─────────────────────────┘
+│  - sürücü giriş kutusu│   çağrısı /
+│  - sohbet/cevap alanı │   REST
+└──────────────────────┘
+```
+
+Tamamen tek makinede çalışır. MQTT broker olarak yerel **Mosquitto** kullanılır
+(IoT dersinin özü olan sensör→broker→tüketici mimarisini göstermek için MQTT
+korunur, fonksiyon çağrısıyla atlanmaz).
+
+Backend ile Pygame aynı süreçte de çalışabilir; başlangıçta sade tutmak için backend
+mantığını doğrudan modül olarak import etmek yeterli, FastAPI'yi yalnızca zaman kalırsa
+bir REST katmanı olarak ekle (opsiyonel, bonus).
+
+---
+
+## 3. Teknoloji Yığını
+
+- **Dil:** Python 3.11+
+- **MQTT:** paho-mqtt (istemci) + Mosquitto (yerel broker)
+- **Veritabanı:** SQLite (standart kütüphane `sqlite3`)
+- **Algoritma:** saf Python (graf + A*); `networkx` yardımcı olabilir ama A*'yı
+  öğretici olması için elle de yazabiliriz
+- **LLM:** Function calling destekleyen bir sağlayıcı.
+  - Birincil seçenek: yerel **Ollama** (Llama 3.1 veya Mistral) — ücretsiz, internet
+    gerektirmez, gizlilik dostu, function calling destekler.
+  - Alternatif: OpenAI veya Anthropic API (API anahtarı `.env` dosyasında).
+  - Hangisi kullanılırsa kullanılsın, LLM çağrısı `llm/` altında tek bir arayüzün
+    arkasına soyutlanır; sağlayıcı değişse de geri kalan kod değişmez.
+- **Arayüz:** Pygame
+- **Test:** pytest
+- **Ortam:** `python -m venv venv` ile sanal ortam, bağımlılıklar `requirements.txt`
+
+---
+
+## 4. Klasör Yapısı (hedef)
+
+```
+otopark/
+├── CLAUDE.md                 # bu dosya
+├── README.md                 # kurulum + çalıştırma talimatları
+├── requirements.txt
+├── .env.example              # API anahtarı vb. için örnek
+├── config.py                 # tüm ayarlar (yer sayısı, MQTT host, model adı...)
+│
+├── simulator/
+│   └── sensor_simulator.py   # park yeri durumlarını üretir, MQTT'ye yayınlar
+│
+├── backend/
+│   ├── mqtt_client.py        # MQTT abonesi, gelen veriyi DB'ye yazar
+│   ├── database.py           # SQLite şeması ve sorguları
+│   └── parking_state.py      # anlık doluluk durumunu sunan katman
+│
+├── algorithm/
+│   ├── graph.py              # otopark grafı (düğümler, kenarlar, mesafeler)
+│   ├── astar.py              # A* en kısa yol
+│   └── allocator.py          # tercihe göre filtre + en uygun yer seçimi + çoklu atama
+│
+├── llm/
+│   ├── tools.py              # function calling araç tanımları (JSON şema)
+│   ├── client.py             # LLM sağlayıcı soyutlaması (ollama/openai/anthropic)
+│   └── orchestrator.py       # doğal dil → araç çağrısı → doğal dil cevap
+│
+├── ui/
+│   ├── pygame_app.py         # ana pencere, döngü, çizim
+│   ├── widgets.py            # metin giriş kutusu, buton, sohbet alanı
+│   └── layout.py             # ızgara yerleşimi, renkler, koordinatlar
+│
+├── tests/
+│   ├── test_astar.py
+│   ├── test_allocator.py
+│   └── test_orchestrator.py
+│
+└── main.py                   # her şeyi başlatan giriş noktası
+```
+
+---
+
+## 5. Veri Modeli
+
+### Park yeri (ParkingSpot)
+- `id`: benzersiz kimlik (örn. "A-12")
+- `node_id`: graf üzerindeki düğüm numarası
+- `type`: `"normal" | "disabled" | "ev_charging"` (normal / engelli / elektrikli şarjlı)
+- `occupied`: boolean
+- `x`, `y`: Pygame'de çizim için ekran koordinatları
+- `zone`: bölge etiketi (örn. "giriş yakını", "çıkış yakını")
+
+### Graf
+- Düğümler: giriş kapısı (başlangıç), koridor kavşakları, park yerleri (hedefler)
+- Kenarlar: düğümler arası yürüme/sürüş mesafesi (ağırlık)
+- A* sezgisel fonksiyonu: düğümler arası Öklid (düz çizgi) mesafesi
+
+### Sürücü isteği (function calling parametreleri)
+- `vehicle_type`: `"normal" | "disabled" | "ev"`
+- `preference`: `"nearest_entrance" | "nearest_exit" | "any"` (girişe/çıkışa yakın / farketmez)
+- `needs_charging`: boolean
+
+---
+
+## 6. LLM Function Calling Tasarımı
+
+LLM'e tanımlanacak ana araç:
+
+```
+find_best_parking_spot(
+    vehicle_type: str,      # "normal" | "disabled" | "ev"
+    preference: str,        # "nearest_entrance" | "nearest_exit" | "any"
+    needs_charging: bool
+) -> { spot_id, path, distance, walk_to_exit }
+```
+
+Akış (`llm/orchestrator.py`):
+1. Sürücünün serbest metni LLM'e gönderilir, araç tanımlarıyla birlikte.
+2. LLM doğru parametreleri çıkarıp `find_best_parking_spot` aracını çağırır.
+3. Bu çağrı bizim `algorithm/allocator.py` fonksiyonumuzu tetikler; sonuç (yer + yol)
+   araç sonucu olarak LLM'e geri verilir.
+4. LLM sonucu doğal dille özetler (örn. "Sizi B-12 numaralı şarjlı yere yönlendirdim,
+   çıkışa yaklaşık 30 metre.").
+5. Hem yapılandırılmış sonuç (Pygame'in çizmesi için) hem doğal dil cevabı döndürülür.
+
+**Önemli:** LLM yalnızca anlama + açıklama yapar; kararı (en uygun yer) deterministik
+algoritma verir. Sunumda "LLM'i süs değil, fonksiyonel bir bileşen olarak kullandık,
+karar algoritmaya ait" vurgusu yapılacak.
+
+---
+
+## 7. İş Bölümü (2 kişi)
+
+Katmanlara göre bölünür; entegrasyon birlikte yapılır.
+
+- **Kişi A — IoT & Veri:** `simulator/`, `backend/` (MQTT, SQLite, doluluk durumu).
+- **Kişi B — Zeka & Arayüz:** `algorithm/`, `llm/`, `ui/`.
+- **Birlikte:** `main.py` entegrasyonu, testler, sunum, demo provası.
+
+Her ikisi de tüm katmanları anlamalı (sunumda sorular ikisine de gelir). Kod ortak bir
+Git deposunda tutulur, sık commit edilir.
+
+---
+
+## 8. Adım Adım Görevler
+
+Görevleri sırayla yap. Her görevi bitirince `## İlerleme Durumu` bölümünde işaretle,
+küçük bir commit at ve sıradakine geç. Bir görev büyükse alt adımlarını ayrı ayrı
+tamamla.
+
+### Faz 0 — Kurulum
+- [ ] **G0.1** Sanal ortam oluştur, `requirements.txt` yaz (pygame, paho-mqtt, pytest;
+      LLM sağlayıcısına göre ollama/openai/anthropic), kur.
+- [ ] **G0.2** Klasör yapısını (Bölüm 4) iskelet olarak oluştur, her modüle boş/temel
+      dosya koy.
+- [ ] **G0.3** `config.py` yaz: park yeri sayısı, tip dağılımı, MQTT host/port/topic,
+      LLM model adı/sağlayıcı, Pygame pencere boyutu gibi tüm sabitler burada.
+- [ ] **G0.4** `.env.example` ve `README.md` taslağı (kurulum + çalıştırma adımları).
+- [ ] **G0.5** Yerel Mosquitto broker'ın kurulu olduğunu doğrula (talimatı README'ye yaz).
+
+### Faz 1 — IoT katmanı (Kişi A)
+- [ ] **G1.1** `backend/database.py`: SQLite şeması (park yerleri tablosu), tabloyu
+      başlangıç verisiyle dolduran fonksiyon, güncelleme/sorgu fonksiyonları.
+- [ ] **G1.2** `simulator/sensor_simulator.py`: N park yerinin durumunu üreten döngü.
+      Başlangıçta rastgele doluluk; sonra zaman senaryosu (sabah dolar, akşam boşalır).
+      Her durum değişikliğini MQTT topic'ine JSON olarak yayınla.
+- [ ] **G1.3** `backend/mqtt_client.py`: topic'e abone ol, gelen mesajı parse et,
+      `database.py` üzerinden DB'yi güncelle.
+- [ ] **G1.4** `backend/parking_state.py`: o anki tüm doluluk durumunu (liste/dict)
+      döndüren sade bir okuma katmanı. Algoritma ve UI bunu kullanacak.
+- [ ] **G1.5** Manuel test: simülatörü ve mqtt_client'ı ayrı terminalde çalıştır,
+      DB'nin güncellendiğini doğrula. Sonucu README'ye not düş.
+
+### Faz 2 — Algoritma katmanı (Kişi B)
+- [ ] **G2.1** `algorithm/graph.py`: otoparkı graf olarak kur. Düğümler: giriş, çıkış,
+      koridor kavşakları, park yerleri. Kenar ağırlıkları = mesafe. Park yeri
+      ekran koordinatları graf düğümleriyle eşleşsin (UI ile tutarlı).
+- [ ] **G2.2** `algorithm/astar.py`: A* algoritması (saf Python). Başlangıç düğümünden
+      hedef düğüme en kısa yolu ve toplam mesafeyi döndür. Sezgisel: Öklid mesafesi.
+- [ ] **G2.3** `algorithm/allocator.py`: `find_best_parking_spot(vehicle_type,
+      preference, needs_charging)` fonksiyonu. Adımlar: (a) parking_state'ten boş
+      yerleri al, (b) araç tipi/şarj ihtiyacına göre filtrele, (c) tercihe göre
+      başlangıç/hedef düğümünü belirle, (d) her aday için A* mesafesini hesapla,
+      (e) en küçük mesafeli yeri seç. Sonuç: spot_id, yol (düğüm listesi), mesafe.
+- [ ] **G2.4** (Bonus) Çoklu araç dengeli atama: aynı anda gelen birden çok araç için
+      greedy atama; istersek Hungarian algoritması ile optimal atama.
+- [ ] **G2.5** `tests/test_astar.py` ve `tests/test_allocator.py`: bilinen küçük bir
+      grafta beklenen sonuçları doğrula.
+
+### Faz 3 — LLM katmanı (Kişi B)
+- [ ] **G3.1** `llm/tools.py`: `find_best_parking_spot` için function calling JSON
+      şemasını tanımla (parametreler, açıklamalar, enum değerleri).
+- [ ] **G3.2** `llm/client.py`: sağlayıcı soyutlaması. `chat(messages, tools)` arayüzü;
+      altında Ollama (varsayılan) veya OpenAI/Anthropic. Sağlayıcı `config.py`'den seçilir.
+- [ ] **G3.3** `llm/orchestrator.py`: serbest metni al → LLM'e araçlarla gönder →
+      LLM araç çağrısı yaparsa `allocator.find_best_parking_spot`'u çalıştır → sonucu
+      LLM'e geri ver → doğal dil cevabı al. Hem yapılandırılmış sonucu hem metni döndür.
+- [ ] **G3.4** Hata yönetimi: LLM yanlış/eksik parametre verirse makul varsayılanlara
+      düş; uygun boş yer yoksa kullanıcıya nazikçe açıkla.
+- [ ] **G3.5** `tests/test_orchestrator.py`: birkaç örnek cümle ("engelli yerim
+      lazım", "şarjlı yer çıkışa yakın olsun") doğru parametrelere çözülüyor mu?
+      (LLM çağrısı mock'lanabilir.)
+
+### Faz 4 — Pygame arayüzü (Kişi B)
+- [ ] **G4.1** `ui/layout.py`: otopark ızgarasının ekran yerleşimi, renk paleti
+      (boş=yeşil, dolu=kırmızı, önerilen=sarı/yanıp sönen, engelli/ev için ikon/renk),
+      koordinat hesapları.
+- [ ] **G4.2** `ui/widgets.py`: metin giriş kutusu (klavye girişi), gönder butonu,
+      sohbet/cevap gösterim alanı. (Pygame'de hazır input yok, elle yaz.)
+- [ ] **G4.3** `ui/pygame_app.py`: ana döngü. Sol/üst tarafta otopark ızgarası
+      (parking_state'ten canlı), alt/sağda sohbet kutusu. Sürücü yazıp gönderince
+      orchestrator çağrılır, dönen yer ızgarada vurgulanır.
+- [ ] **G4.4** Animasyon: önerilen yere giden yol (A* sonucu düğüm listesi) üzerinde
+      bir araç ikonunu adım adım hareket ettir.
+- [ ] **G4.5** Canlı güncelleme: simülatör doluluk değiştirdikçe ızgara renkleri
+      güncellensin (DB'yi periyodik oku ya da olay tetikle).
+
+### Faz 5 — Entegrasyon (Birlikte)
+- [ ] **G5.1** `main.py`: simülatörü (ayrı thread/process), MQTT abonesini ve Pygame
+      uygulamasını tek komutla başlat. Kapanışta temiz sonlandır.
+- [ ] **G5.2** Uçtan uca akışı doğrula: araç gelir → metin → LLM → algoritma → görsel
+      yönlendirme. En az 3 farklı senaryo (normal/engelli/elektrikli).
+- [ ] **G5.3** Hata ve uç durumlar: otopark dolu, geçersiz girdi, LLM/broker erişilemez.
+- [ ] **G5.4** README'yi tamamla: mimari şeması, kurulum, çalıştırma, ekran görüntüleri.
+
+### Faz 6 — Sunum & teslim (Birlikte)
+- [ ] **G6.1** Sunum içeriği: problem, mimari, IoT/algoritma/LLM katmanlarının rolü,
+      "LLM karar vermez, anlar+açıklar; karar algoritmanın" vurgusu, demo, sonuç.
+- [ ] **G6.2** Demo provası: 3 senaryoyu sorunsuz gösterecek hazır metinler.
+- [ ] **G6.3** Olası soru-cevap hazırlığı (neden A*, neden MQTT, LLM'in sınırları,
+      gizlilik, ölçeklenebilirlik).
+- [ ] **G6.4** Kod temizliği, yorumlar, son commit, teslim.
+
+---
+
+## 9. Çalıştırma Komutları (doldurulacak)
+
+> Bu bölümü kurulum ilerledikçe gerçek komutlarla güncelle.
+
+```bash
+# Sanal ortam
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Mosquitto broker (yerel)
+# (kurulum talimatı README'de)
+
+# Tüm sistemi başlat
+python main.py
+
+# Testler
+pytest
+```
+
+---
+
+## 10. Çalışma Kuralları (Claude Code için)
+
+- Her oturum başında bu dosyayı ve `## İlerleme Durumu`'nu oku, kaldığın görevden devam et.
+- Bir seferde tek görevi (veya bir görevin alt adımını) tamamla; bitince ilerlemeyi işaretle.
+- Yeni dosya açmadan önce ilgili modülün Bölüm 4'teki yerine koy.
+- Kodu sade ve yorumlu tut; bunlar öğrenci projesi, okunabilirlik önemli.
+- Türkçe değişken/yorum karışımından kaçın: kod İngilizce, açıklayıcı yorumlar Türkçe olabilir.
+- LLM sağlayıcısı değişebilir; LLM çağrılarını her zaman `llm/client.py` arkasında tut.
+- Sır/anahtarları koda gömme; `.env` kullan, `.env`'i `.gitignore`'a ekle.
+- Büyük bir mimari değişiklik gerekiyorsa önce bu dosyadaki ilgili bölümü güncelle.
+- Karar verilmesi gereken belirsizlik varsa varsayılan seç, ama yorumda not düş.
+
+---
+
+## 11. İlerleme Durumu
+
+> Tamamlanan görevleri buradan takip et. Format: `[x] G0.1 — kısa not / tarih`
+
+**Faz 0 — Kurulum (tamamlandı, G0.5 hariç)**
+- [x] G0.1 — venv + requirements.txt yazıldı, bağımlılıklar kuruldu (2026-06-01).
+- [x] G0.2 — Klasör iskeleti + tüm modüllere temel dosyalar kondu (2026-06-01).
+- [x] G0.3 — config.py yazıldı (yer sayısı, MQTT, LLM, Pygame ayarları) (2026-06-01).
+- [x] G0.4 — .env.example + README taslağı (kurulum/çalıştırma) yazıldı (2026-06-01).
+- [x] G0.5 — Mosquitto 2.1.2 winget ile kuruldu, servis çalışıyor (Automatic).
+      paho-mqtt ile pub/sub round-trip testi başarılı (2026-06-01).
+
+**Faz 0 tamamen bitti.**
+
+**Faz 1 — IoT katmanı (tamamlandı)**
+- [x] G1.1 — backend/database.py: SQLite şeması (spots), yerleşimden tohumlama,
+      sorgu/güncelleme fonksiyonları. WAL modu (eşzamanlı okuma/yazma) (2026-06-01).
+- [x] G1.2 — simulator/sensor_simulator.py: rastgele doluluk + her değişikliği
+      MQTT'ye JSON yayınlar; başlangıç snapshot'ı; stop_event ile temiz durur (2026-06-01).
+- [x] G1.3 — backend/mqtt_client.py: topic'e abone, JSON parse, DB güncelle (2026-06-01).
+- [x] G1.4 — backend/parking_state.py: get_state / get_empty_spots / summary okuma katmanı (2026-06-01).
+- [x] G1.5 — Uçtan uca test geçti: sensör→MQTT→abone→DB akışı doğrulandı (2026-06-01).
+
+**Faz 2 — Algoritma katmanı (G2.4 hariç tamamlandı)**
+- [x] G2.1 — algorithm/graph.py: **gerçekçi AVM düzeni** — çift sıralı park bantları
+      (double-loaded aisle) + yatay araç yolları + dikey bağlantı yolları (cross-lane)
+      = ızgara yol ağı. Giriş sol-alt, yaya çıkışı/AVM kapısı üst-orta. ParkingSpot +
+      Graph (Öklid ağırlıklı). **240 yer**, 386 düğüm (2026-06-01, kapasite revize edildi).
+- [x] G2.2 — algorithm/astar.py: saf Python A*, Öklid sezgisel (2026-06-01).
+- [x] G2.3 — algorithm/allocator.py: find_best_parking_spot — filtre + A* mesafe +
+      tercih (girişe/çıkışa yakın) ile en uygun yeri seçer (2026-06-01).
+- [ ] G2.4 — (Ertelendi: Hungarian çoklu atama; kullanıcı onayıyla sonraya bırakıldı.)
+- [x] G2.5 — tests/test_astar.py (3) + tests/test_allocator.py (5): 9 test geçti (2026-06-01).
+
+**Faz 3 — LLM katmanı (tamamlandı)**
+- [x] G3.1 — llm/tools.py: nötr function calling şeması (enum, açıklama) +
+      SYSTEM_PROMPT + DEFAULTS (2026-06-01).
+- [x] G3.2 — llm/client.py: LLMClient soyutlaması; GeminiClient tam implemente
+      (google-genai), geçici 503'lere retry. Diğer sağlayıcılar için genişletme
+      noktası hazır (2026-06-01).
+- [x] G3.3 — llm/orchestrator.py: handle_request — metin→çıkarım→allocator→açıklama;
+      yapılandırılmış sonuç + doğal dil cevabı döndürür (2026-06-01).
+- [x] G3.4 — Hata yönetimi: eksik param→varsayılan; LLM erişilemezse keyword yedeği;
+      açıklama alınamazsa şablon cevap; uygun yer yoksa nazik mesaj (2026-06-01).
+- [x] G3.5 — tests/test_orchestrator.py (6 test, LLM mock'lu): 14 test toplam geçti (2026-06-01).
+
+**Faz 4 — Pygame arayüzü (kod tamamlandı; görsel doğrulama kullanıcıda)**
+- [x] G4.1 — ui/layout.py: panel yerleşimi (sol otopark / sağ sohbet), Transform
+      (mantıksal→ekran koordinat, oranı koruyarak sığdırma), spot_color renk kuralı (2026-06-01).
+- [x] G4.2 — ui/widgets.py: InputBox (Türkçe klavye girişi + imleç), Button,
+      ChatLog (word-wrap, kaydırma) (2026-06-01).
+- [x] G4.3 — ui/pygame_app.py: ana döngü; yatay+dikey yollar, 240 yer canlı renkli,
+      sohbet paneli. Sürücü gönderince orchestrator **ayrı thread'de** çağrılır
+      (UI donmaz, "Düşünüyor..." gösterilir) (2026-06-01).
+- [x] G4.4 — CarAnimation: A* yolu (düğüm listesi) ekran noktalarına çevrilip araç
+      ikonu sabit hızla hedefe ilerler; önerilen yer sarı yanıp söner + rota çizgisi (2026-06-01).
+- [x] G4.5 — Canlı güncelleme: parking_state'ten her ~0.5 sn doluluk okunup ızgara
+      renkleri tazelenir (simülatör+abone thread'leri pygame_app içinde başlar) (2026-06-01).
+- NOT: GUI görsel olarak başsız (SDL dummy) test edildi — çökme yok, animasyon
+  hedefe ulaşıyor, çizim fonksiyonları sorunsuz. Gerçek pencereyi kullanıcı
+  `python -m ui.pygame_app` ile açıp görecek.
+- **Görsel revizyon (kullanıcı geri bildirimi):** İlk sürüm "renkli kareler" gibi
+  görünüyordu ve araç hareketi yoktu. Baştan yazıldı (ui/sprites.py eklendi):
+  gerçekçi park cepleri (beyaz şerit), dolu yerlerde üstten görünüm araç sprite'ları
+  (çeşitli renkler), EV=şimşek / engelli=tekerlekli sandalye ikonları, asfalt yollar
+  + sarı kesikli şeritler, **yollarda dolaşan ambient trafik (12 araç)**, yönüne
+  dönerek süren yönlendirme aracı. SDL dummy ile PNG render alınıp görsel doğrulandı.
+- **Görsel revizyon v2 (kullanıcı geri bildirimi):** (1) Düzen **bloklu** yapıldı —
+  park yerleri 4 bloka ayrıldı, dikey yollar blok aralarındaki boşluklarda (artık yer
+  yolun üstünde değil). (2) **Çoklu giriş/çıkış**: 2 giriş (alt köşeler) + 2 çıkış
+  (üst köşeler); allocator en yakın giriş/çıkışa göre hesaplıyor. (3) Ambient araçlar
+  **sürekli** (bittiği yerden devam, ışınlanma yok) ve bazen kapılara gidiyor (giren/
+  çıkan trafik). (4) Şerit ofseti (sağdan sürüş) ile karşı yönlü araçlar ayrıldı.
+  (5) Araç sprite'ı iyileştirildi (tekerlek/kabin/cam/stop lambası). graph node
+  adları ENTRANCE/EXIT -> ENTRANCES/EXITS listesi; graph.geom UI'a yol geometrisi verir.
+- **Bayat DB düzeltmesi:** Düzen değişince eski parking.db koordinatları bayatlıyordu
+  (her şey sola yığılıyordu). database.init_db artık **düzen imzası** tutuyor; imza
+  değişince tabloyu otomatik yeniden tohumluyor.
+
+**Sıradaki:** Faz 5 — Entegrasyon, **G5.1** (main.py: her şeyi tek komutla başlat).
+
+### Notlar / Kararlar
+- Python 3.12.10 kullanılıyor (plan 3.11+ diyordu, uyumlu).
+- LLM sağlayıcı varsayılanı **gemini** (model: gemini-2.5-flash) — kullanıcının
+  Gemini API key'i var. .env'de GEMINI_API_KEY. NOT: gemini-2.0-flash ücretsiz
+  kotası 0 çıktı, bu yüzden gemini-2.5-flash kullanıldı. Anthropic/OpenAI/Ollama
+  client.py'de genişletme noktası olarak duruyor (henüz implemente değil).
+- Gemini bazen geçici 503 (aşırı yük) döndürüyor; client.py'de retry + orchestrator'da
+  keyword yedeği var, sistem LLM çökse de çalışıyor (demo güvencesi).
+- Ertelenenler (kullanıcı onayıyla): FastAPI REST katmanı, Hungarian çoklu atama.
+  Tek araç akışı önce bitirilecek.
+- **Kapasite revize edildi (kullanıcı isteği):** Başlangıçtaki 50'lik basit ızgara
+  yerine gerçekçi AVM otoparkı seçildi → **240 yer** (5 bant × 2 sıra × 24 sütun),
+  6 yatay yol + 4 dikey bağlantı yolu (sütun 0/8/16/23). Tek kat. config.py'de
+  parametrik (N_AISLES, SPOTS_PER_ROW, CROSS_LANE_EVERY ile kolayca ölçeklenir).
+  Çok katlı düzen reddedildi (Faz 4'ü uzatmamak için). allocator 240 adayı ~54 ms'de
+  çözüyor (yeterince hızlı). Spot id şeması: bant harfi + sıra-içi numara (A-1..E-48).
+- requirements.txt'e hem anthropic hem openai hem requests kondu ki sağlayıcı
+  değişse de kod çalışsın (Ollama requests ile HTTP üzerinden çağrılacak).
+
+---
+
+## 12. Açık Sorular / Yapılacak Kararlar
+
+- LLM sağlayıcısı kesinleşecek: Ollama (yerel, ücretsiz) mı, API mı? Varsayılan: Ollama.
+- Park yeri sayısı: ~~başlangıç 50~~ → **240'a çıkarıldı** (gerçekçi AVM düzeni, çözüldü).
+- FastAPI REST katmanı eklenecek mi? Varsayılan: hayır (zaman kalırsa bonus).
+- Çoklu araç atama (Hungarian) yapılacak mı? Varsayılan: bonus, tek araç akışı önce bitsin.

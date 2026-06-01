@@ -1,0 +1,27 @@
+# Sanal ortam
+venv/
+.venv/
+
+# Sırlar
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Veritabanı (çalışınca üretilir)
+parking.db
+
+# Önizleme / geçici görüntüler
+preview.png
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code makineye özel ayarlar
+.claude/settings.local.json

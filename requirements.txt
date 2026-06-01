@@ -1,0 +1,16 @@
+# --- Çekirdek bağımlılıklar (her zaman gerekli) ---
+pygame>=2.5            # Görsel arayüz (otopark ızgarası + animasyon)
+paho-mqtt>=2.0         # MQTT istemcisi (sensör -> broker -> backend)
+pytest>=8.0            # Testler
+
+# --- LLM sağlayıcıları (config.py'de hangisi seçilirse o kullanılır) ---
+# Varsayılan: gemini (Google) — ücretsiz katman + function calling.
+# Ollama yerel/ücretsiz alternatiftir ve HTTP ile çağrıldığından ekstra
+# paket gerektirmez (requests yeterli).
+google-genai>=0.3      # Google Gemini API (varsayılan, function calling)
+anthropic>=0.39        # Anthropic API (alternatif)
+openai>=1.40           # OpenAI API (alternatif)
+requests>=2.31         # Ollama yerel REST çağrıları + genel HTTP
+
+# --- Yardımcılar ---
+python-dotenv>=1.0     # .env'den API anahtarı / ayar okuma
