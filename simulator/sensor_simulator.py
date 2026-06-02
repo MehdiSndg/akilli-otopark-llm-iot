@@ -2,11 +2,15 @@
 sensor_simulator.py — Park yeri doluluk sensörlerinin simülasyonu (gün-içi eğri).
 
 Gerçek donanım yerine: her park yerinin "sensörü" doluluk durumunu üretir ve her
-değişikliği MQTT topic'ine JSON olarak yayınlar (sensör -> broker -> tüketici).
+değişikliği MQTT'ye yayınlar (sensör -> broker -> tüketici). Gerçekçi IoT
+topolojisi için:
+  - Doluluk        : otopark/spots/<bölüm>/<id>   (retained, QoS 1)
+  - Sağlık/telemetri: otopark/health/<id>          (batarya, sinyal, çevrimiçi)
+  - Ağ geçidi LWT  : otopark/gateway/status        (süreç çökerse broker "offline" der)
 
-Doluluk artık GÜNÜN SAATİNE göre değişir: gece düşük, sabah dolmaya başlar, öğle
-ve akşam zirve yapar. Simüle bir gün, config.DAY_LENGTH_SEC gerçek saniyede geçer.
-Mevcut saat/yoğunluk SIM_STATE'te tutulur (web arayüzü bunu gösterir).
+Doluluk GÜNÜN SAATİNE göre değişir: gece düşük, sabah dolar, öğle/akşam zirve.
+Birkaç sensör bilinçli olarak "zayıf pil"dir; pilleri hızlı tükenir ve sonunda
+çevrimdışı olur (anomali panelinin gerçek içerikle dolması için).
 
 Çalıştırma:
     python -m simulator.sensor_simulator      # tek başına, Ctrl+C ile dur
@@ -90,10 +94,60 @@ def _tick(state, spot_ids, publish):
         publish(sid, state[sid])
 
 
+# ---------------------------------------------------------------------------
+# Sensör sağlığı (telemetri) simülasyonu
+# ---------------------------------------------------------------------------
+def _init_health(spot_ids):
+    """Her sensör için batarya/sinyal durumu. Birkaçı 'zayıf pil' (hızlı tükenir)."""
+    weak = set(random.sample(spot_ids, min(3, len(spot_ids))))   # demo: 3 arızalı aday
+    health = {}
+    for sid in spot_ids:
+        health[sid] = {
+            "battery": 100.0,
+            "rssi": random.randint(-72, -48),
+            "online": True,
+            "weak": sid in weak,
+        }
+    return health
+
+
+def _step_health(health):
+    """Telemetri turu: pilleri tüket, zayıfları çevrimdışına götür."""
+    for sid, h in health.items():
+        if not h["online"]:
+            continue
+        drain = config.BATTERY_DRAIN_PER_PUBLISH * (12 if h["weak"] else 1)
+        h["battery"] = max(0.0, h["battery"] - drain)
+        h["rssi"] = max(-95, min(-40, h["rssi"] + random.randint(-2, 2)))
+        if h["battery"] <= 0.0:                  # pil bitti -> sensör çevrimdışı
+            h["online"] = False
+
+
+def _publish_health(client, health):
+    """Tüm sensörlerin sağlık telemetrisini yayınla (broker) ya da DB'ye yaz (yedek)."""
+    now = time.time()
+    for sid, h in health.items():
+        payload = {"battery": round(h["battery"], 1), "rssi": h["rssi"],
+                   "online": h["online"], "ts": now}
+        if client is not None:
+            client.publish(config.mqtt_health_topic(sid), json.dumps(payload),
+                           qos=1, retain=True)
+        else:
+            database.set_health(sid, battery=h["battery"], rssi=h["rssi"],
+                                online=h["online"], last_seen=now)
+
+
 def _publish(client, spot_id, occupied):
-    client.publish(config.MQTT_TOPIC, json.dumps({
+    """Doluluk değişimini per-spot topic'e retained + QoS1 yayınla."""
+    client.publish(config.mqtt_spot_topic(spot_id), json.dumps({
         "spot_id": spot_id, "occupied": bool(occupied), "ts": time.time(),
-    }), qos=1)
+    }), qos=1, retain=True)
+
+
+def _record_sample(state):
+    """Toplam doluluk örneği kaydet (analitik zaman grafiği için)."""
+    occ = sum(1 for v in state.values() if v)
+    database.add_sample(occ, len(state))
 
 
 def _sleep_interruptible(interval, stop_event):
@@ -103,14 +157,29 @@ def _sleep_interruptible(interval, stop_event):
         waited += 0.1
 
 
-def _run_brokerless(state, spot_ids, stop_event, interval):
+def _loop(state, spot_ids, health, stop_event, interval, occ_pub, health_client):
+    """Ortak döngü: doluluk + periyodik sağlık telemetrisi + periyodik örnek."""
+    tick = 0
+    while not (stop_event and stop_event.is_set()):
+        _tick(state, spot_ids, occ_pub)
+        if tick % config.SAMPLE_EVERY == 0:
+            _record_sample(state)
+        if tick % config.HEALTH_PUBLISH_EVERY == 0:
+            _step_health(health)
+            _publish_health(health_client, health)
+        tick += 1
+        _sleep_interruptible(interval, stop_event)
+
+
+def _run_brokerless(state, spot_ids, health, stop_event, interval):
     """Broker yokken yedek: değişiklikleri doğrudan SQLite'a yaz."""
     for sid, occ in state.items():
         database.set_occupied(sid, occ)
-    print(f"[simulator] (brokersız) {len(state)} yer DB'ye yazıldı")
-    while not (stop_event and stop_event.is_set()):
-        _tick(state, spot_ids, lambda sid, occ: database.set_occupied(sid, occ))
-        _sleep_interruptible(interval, stop_event)
+    _publish_health(None, health)
+    print(f"[simulator] (brokersız) {len(state)} yer + sağlık DB'ye yazıldı")
+    _loop(state, spot_ids, health, stop_event, interval,
+          occ_pub=lambda sid, occ: database.set_occupied(sid, occ),
+          health_client=None)
     print("[simulator] (brokersız) durduruldu")
 
 
@@ -119,27 +188,41 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     interval = config.SIM_INTERVAL_SEC if interval is None else interval
     state = _initial_state()
     spot_ids = list(state.keys())
+    health = _init_health(spot_ids)
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="otopark-sensor")
+    # LWT (Last Will): süreç beklenmedik kapanırsa broker bunu yayınlar
+    client.will_set(config.MQTT_TOPIC_GATEWAY,
+                    json.dumps({"status": "offline", "ts": time.time()}),
+                    qos=1, retain=True)
     try:
         client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
     except OSError as e:
         print(f"[simulator] Broker'a bağlanılamadı ({config.MQTT_HOST}:{config.MQTT_PORT}); "
               f"doluluk doğrudan DB'ye yazılacak. ({e})")
-        _run_brokerless(state, spot_ids, stop_event, interval)
+        _run_brokerless(state, spot_ids, health, stop_event, interval)
         return
     client.loop_start()
 
+    # Ağ geçidi çevrimiçi (retained) — UI/abone başlayınca son durumu görür
+    client.publish(config.MQTT_TOPIC_GATEWAY,
+                   json.dumps({"status": "online", "ts": time.time()}), qos=1, retain=True)
+
     for sid, occ in state.items():           # başlangıç durumunu yayınla
         _publish(client, sid, occ)
-    print(f"[simulator] {len(state)} yer için başlangıç durumu yayınlandı "
+    _publish_health(client, health)
+    print(f"[simulator] {len(state)} yer + sağlık telemetrisi yayınlandı "
           f"(saat {SIM_STATE['hour']:.1f}, yoğunluk {SIM_STATE['busy']})")
 
     try:
-        while not (stop_event and stop_event.is_set()):
-            _tick(state, spot_ids, lambda sid, occ: _publish(client, sid, occ))
-            _sleep_interruptible(interval, stop_event)
+        _loop(state, spot_ids, health, stop_event, interval,
+              occ_pub=lambda sid, occ: _publish(client, sid, occ),
+              health_client=client)
     finally:
+        # Temiz kapanış: çevrimiçi -> çevrimdışı bildir (LWT'siz normal kapanışta da)
+        client.publish(config.MQTT_TOPIC_GATEWAY,
+                       json.dumps({"status": "offline", "ts": time.time()}),
+                       qos=1, retain=True)
         client.loop_stop()
         client.disconnect()
         print("[simulator] durduruldu")

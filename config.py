@@ -80,8 +80,42 @@ LONG_STAY_HINT_HOURS = 5
 # ---------------------------------------------------------------------------
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_TOPIC = "otopark/spots"       # Sensör durum güncellemelerinin yayınlandığı topic
 MQTT_CLIENT_ID = "otopark-backend"
+
+# Topic hiyerarşisi (gerçekçi IoT topolojisi):
+#   otopark/spots/<bölüm>/<id>   -> park yeri doluluğu (retained, QoS 1)
+#   otopark/health/<id>          -> sensör sağlık telemetrisi (batarya/sinyal)
+#   otopark/gateway/status       -> ağ geçidi (sensör simülatörü) çevrimiçi/çevrimdışı
+#                                   (LWT = Last Will: süreç çökerse broker "offline" yayınlar)
+MQTT_TOPIC_BASE = "otopark"
+MQTT_TOPIC = "otopark/spots"               # (geriye dönük; abone wildcard ile dinler)
+MQTT_TOPIC_SPOTS_WILDCARD = "otopark/spots/#"
+MQTT_TOPIC_HEALTH_WILDCARD = "otopark/health/#"
+MQTT_TOPIC_GATEWAY = "otopark/gateway/status"
+
+
+def mqtt_spot_topic(spot_id):
+    """Bir park yerinin doluluk topic'i: otopark/spots/<bölüm>/<id> (örn. .../A/A-12)."""
+    section = spot_id.split("-")[0]
+    return f"{MQTT_TOPIC_BASE}/spots/{section}/{spot_id}"
+
+
+def mqtt_health_topic(spot_id):
+    return f"{MQTT_TOPIC_BASE}/health/{spot_id}"
+
+
+# Sensör sağlık/telemetri simülasyonu
+HEALTH_PUBLISH_EVERY = 8           # kaç simülatör turunda bir sağlık telemetrisi yayınlanır
+BATTERY_DRAIN_PER_PUBLISH = 0.04   # her telemetride pil düşüşü (% — yavaş tükenir)
+LOW_BATTERY_THRESHOLD = 20.0       # bu yüzdenin altı "düşük pil" uyarısı
+SENSOR_OFFLINE_AFTER_SEC = 30.0    # bu süre telemetri gelmezse sensör "çevrimdışı" sayılır
+
+# Anomali eşikleri
+STUCK_OCCUPIED_HOURS = 14.0        # bir yer bu kadar simüle saatten uzun dolu kalırsa "takılı/arıza"
+RESERVATION_TIMEOUT_SEC = 90.0     # rezervasyon bu süre içinde dolmazsa otomatik düşer
+
+# Analitik / örnekleme
+SAMPLE_EVERY = 3                   # kaç simülatör turunda bir toplam doluluk örneği kaydedilir
 
 
 # ---------------------------------------------------------------------------
