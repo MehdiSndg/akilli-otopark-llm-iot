@@ -1,10 +1,10 @@
 # Akıllı Otopark Yönlendirme Sistemi (LLM + IoT)
 
-Sürücü doğal dille konuşur ("elektrikli arabam var, çıkışa yakın bir yer
-istiyorum"), bir **LLM** isteği anlar ve **function calling** ile yönlendirme
-algoritmasını çağırır. Algoritma graf üzerinde **A\*** ile en uygun boş park
-yerini bulur; sonuç hem doğal dille açıklanır hem de **Pygame** penceresinde
-görsel olarak gösterilir.
+Sürücü doğal dille konuşur ("elektrikli arabam var, 2 saat kalacağım"), bir
+**LLM** isteği anlar ve **function calling** ile yönlendirme algoritmasını çağırır.
+Algoritma graf üzerinde **A\*** mesafeleri ve **kalış süresi odaklı bir maliyet
+fonksiyonu** ile en uygun boş park yerini bulur; sonuç hem doğal dille açıklanır
+hem de **web tabanlı 2D simülasyonda** (FastAPI + Canvas) görsel olarak gösterilir.
 
 > "Nesnelerin Yapay Zekası (IoT)" dersi dönem projesi — Yapay Zeka ve Veri
 > Mühendisliği.
@@ -12,19 +12,32 @@ görsel olarak gösterilir.
 ## Mimari
 
 ```
-Sensör Simülatörü ──MQTT──► Backend (MQTT abonesi + SQLite)
-                                 │
-                                 ├── Algoritma (graf + A*)
-                                 └── LLM (doğal dil ↔ function calling)
-                                 │
-Pygame Arayüzü ◄── fonksiyon çağrısı ──┘
+Sensör Simülatörü ──MQTT/yedek──► Backend (SQLite + doluluk)
+                                       │
+                                       ├── Algoritma (graf + A* + maliyet fonk.)
+                                       └── LLM (doğal dil ↔ function calling)
+                                       │
+Web Arayüzü (FastAPI + Canvas) ◄── REST/WebSocket ──┘
+(alternatif: Pygame masaüstü)
 ```
 
 Üç katman:
-- **IoT:** park yeri sensör simülasyonu + MQTT yayını + SQLite.
-- **Algoritma:** graf üzerinde A* ile en uygun yer; araç tipi/tercih filtresi.
+- **IoT:** park yeri sensör simülasyonu + MQTT yayını + SQLite. Broker yoksa
+  doluluk doğrudan DB'ye yazılır (brokersız yedek), sayılar yine canlı akar.
+- **Algoritma:** graf üzerinde A* mesafeleri; **kalış süresi maliyet fonksiyonu**
+  `C_i = |d_i − α·t|` ile yer seçimi (kısa kalan kapıya yakın, uzun kalan derine).
 - **LLM:** doğal dili yapılandırılmış parametreye çevirir, sonucu açıklar.
-  *(Karar algoritmaya aittir; LLM yalnızca anlar + açıklar.)*
+  *(Karar algoritmaya/maliyet fonksiyonuna aittir; LLM yalnızca anlar + açıklar.)*
+
+### Maliyet fonksiyonu (karar çekirdeği)
+
+Her boş park yeri `P_i` için maliyet: `C_i = |d_i − α·t|`
+- `d_i`: aracın girdiği kapıdan yere A* sürüş mesafesi
+- `t`: tahmini kalış süresi (saat)
+- `α`: mesafe-zaman ağırlık katsayısı (`config.ALPHA_DISTANCE_PER_HOUR`)
+
+En küçük `C_i`'li boş yer atanır. Böylece kapı önleri kısa kalanlara ayrılır,
+sirkülasyon artar. Süre verilmezse tercihe (girişe/çıkışa yakın) göre en yakın yer.
 
 ## Kurulum
 
@@ -90,8 +103,13 @@ ollama pull llama3.1
 ## Çalıştırma
 
 ```powershell
-python main.py     # (G5.1'de tamamlanacak)
+python main.py            # web arayüzü -> http://127.0.0.1:8000  (önerilen)
+python main.py --pygame   # alternatif Pygame masaüstü arayüzü
 ```
+
+Web sunucusu açıldığında sensör simülatörü ve MQTT abonesi otomatik başlar;
+tarayıcıda `http://127.0.0.1:8000` adresini aç. Sağ panelden giriş kapısını seç
+ve doğal dille park isteğini yaz (ör. *"elektrikli arabam var, 8 saat kalacağım"*).
 
 ## Testler
 
@@ -102,13 +120,14 @@ pytest
 ## Klasör yapısı
 
 ```
-simulator/   Sensör simülasyonu (MQTT yayını)
+simulator/   Sensör simülasyonu (MQTT yayını + brokersız yedek)
 backend/     MQTT abonesi, SQLite, doluluk durumu
-algorithm/   Graf, A*, en uygun yer seçimi
+algorithm/   Graf, A*, maliyet fonksiyonu ile en uygun yer seçimi
 llm/         Function calling araçları, sağlayıcı soyutlaması, orchestrator
-ui/          Pygame arayüzü (ızgara, giriş kutusu, animasyon)
+web/         FastAPI sunucu + Canvas 2D simülasyon (birincil arayüz)
+ui/          Pygame masaüstü arayüzü (alternatif)
 tests/       pytest testleri
-config.py    Tüm ayarlar
+config.py    Tüm ayarlar (maliyet fonksiyonu katsayısı ALPHA dahil)
 main.py      Giriş noktası
 ```
 

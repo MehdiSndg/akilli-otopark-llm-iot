@@ -25,3 +25,4 @@ Thumbs.db
 
 # Claude Code makineye özel ayarlar
 .claude/settings.local.json
+.claude/launch.json

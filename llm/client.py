@@ -69,7 +69,14 @@ def _build_explain_prompt(user_text, result, params):
         )
     spot = result["spot"]
     dur = (params or {}).get("duration_hours")
-    dur_line = f"- Tahmini kalış süresi: {dur} saat\n" if dur else ""
+    if dur:
+        dur_line = (
+            f"- Tahmini kalış süresi: {dur} saat\n"
+            f"- Yer, kalış süresine göre maliyet fonksiyonuyla seçildi: kısa kalanlar "
+            f"kapıya yakın, uzun kalanlar daha derine yönlendirilir (sirkülasyon).\n"
+        )
+    else:
+        dur_line = ""
     return (
         f"Sürücü şöyle dedi: \"{user_text}\".\n"
         f"Yönlendirme algoritması şu yeri seçti:\n"

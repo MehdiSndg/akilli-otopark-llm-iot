@@ -5,7 +5,7 @@ const C = {
   bg: "#1a1d24", lot: "#23272f", road: "#15171d", roadEdge: "#2e333d",
   slot: "#363c48", paint: "#737b8c", lane: "rgba(214,184,86,0.55)",
   island: "#2f5d3a", islandHi: "#3a724a", tree: "#356b43",
-  mall: "#3b3950", mallTop: "#4a melts", glass: "#7fa9c4",
+  mall: "#3b3950", glass: "#7fa9c4",
   ev: "#4eb696", disabled: "#4a86ce", suggested: "#f5c846", yourCar: "#f5c846",
   entrance: "#56c07a", exit: "#e08a4a", text: "#e6eaf2", dim: "#8a92a4",
   cross: "#c9cdd6", mallTop: "#494661",

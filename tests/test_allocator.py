@@ -78,27 +78,46 @@ def test_entrance_changes_choice():
     assert right["path"][0] == ENTRANCES[1]
 
 
-def test_short_stay_prefers_exit_zone():
-    # Üç bölgeden birer boş yer: kısa kalış çıkış yakınına gitmeli
-    spots = _spots_with_free({"E-1", "A-20", "C-1"})   # giriş / çıkış / orta
+# Maliyet fonksiyonu testleri: ENTRANCE-0'dan sürüş mesafeleri
+#   E-1 ≈ 12.1 (kapıya yakın), C-1 ≈ 23.1 (orta derinlik), E-24 ≈ 41.7 (derin/uzak).
+# ALPHA=5 -> ideal mesafe = 5*t. t arttıkça seçilen yer derinleşmeli.
+def test_short_stay_parks_near_entrance():
+    # Kısa kalış (t=1, ideal≈5): kapıya en yakın yer seçilmeli -> E-1
+    spots = _spots_with_free({"E-1", "C-1", "E-24"})
     res = allocator.find_best_parking_spot("normal", "any", duration_hours=1,
                                            spots=spots, entrance=ENTRANCES[0])
-    assert res["spot"]["zone"] == "çıkış yakını"
-    assert res["spot_id"] == "A-20"
+    assert res["spot_id"] == "E-1"
 
 
-def test_long_stay_prefers_middle_zone():
-    # Uzun kalış orta bölgeye gitmeli
-    spots = _spots_with_free({"E-1", "A-20", "C-1"})
-    res = allocator.find_best_parking_spot("normal", "any", duration_hours=5,
+def test_medium_stay_parks_middle():
+    # Orta kalış (t=4, ideal≈20): orta derinlikteki yer seçilmeli -> C-1
+    spots = _spots_with_free({"E-1", "C-1", "E-24"})
+    res = allocator.find_best_parking_spot("normal", "any", duration_hours=4,
                                            spots=spots, entrance=ENTRANCES[0])
-    assert res["spot"]["zone"] == "orta"
     assert res["spot_id"] == "C-1"
 
 
-def test_no_duration_picks_nearest_regardless_of_zone():
-    # Süre verilmezse bölge etkisi olmamalı; en yakın (giriş yakını) seçilmeli
-    spots = _spots_with_free({"E-1", "A-20", "C-1"})
+def test_long_stay_parks_deeper():
+    # Uzun kalış (t=8, ideal≈40): derindeki/uzak yer seçilmeli -> E-24
+    spots = _spots_with_free({"E-1", "C-1", "E-24"})
+    res = allocator.find_best_parking_spot("normal", "any", duration_hours=8,
+                                           spots=spots, entrance=ENTRANCES[0])
+    assert res["spot_id"] == "E-24"
+
+
+def test_no_duration_picks_nearest():
+    # Süre verilmezse maliyet fonksiyonu devre dışı; en yakın yer seçilmeli -> E-1
+    spots = _spots_with_free({"E-1", "C-1", "E-24"})
     res = allocator.find_best_parking_spot("normal", "any", spots=spots,
                                            entrance=ENTRANCES[0])
     assert res["spot_id"] == "E-1"
+
+
+def test_cost_field_is_distance_to_ideal():
+    # Sonuçtaki 'cost' alanı |d_i - ALPHA*t| olmalı (şeffaflık/açıklanabilirlik)
+    import config
+    spots = _spots_with_free({"E-1"})
+    res = allocator.find_best_parking_spot("normal", "any", duration_hours=2,
+                                           spots=spots, entrance=ENTRANCES[0])
+    ideal = config.ALPHA_DISTANCE_PER_HOUR * 2
+    assert abs(res["cost"] - abs(res["distance"] - ideal)) < 0.05

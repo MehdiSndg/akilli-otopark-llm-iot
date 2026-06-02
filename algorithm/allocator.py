@@ -1,17 +1,27 @@
 """
-allocator.py — Tercihe göre filtre + en uygun park yeri seçimi.
+allocator.py — Maliyet fonksiyonu tabanlı en uygun park yeri seçimi.
 
 Ana fonksiyon find_best_parking_spot(...) LLM'in function calling ile çağıracağı
-fonksiyondur. Karar tamamen burada (deterministik algoritma) verilir.
+fonksiyondur. Karar tamamen burada (deterministik algoritma) verilir; LLM yalnızca
+sürücünün isteğini parametreye çevirir, kararı bu maliyet fonksiyonu verir.
 
 Otoparkta BİRDEN FAZLA giriş ve çıkış vardır:
-- Sürüş mesafesi = en yakın GİRİŞ'ten park yerine A* mesafesi.
-- Çıkışa yürüme = park yerinden en yakın ÇIKIŞ'a A* mesafesi.
+- Sürüş mesafesi (d_i) = aracın girdiği GİRİŞ'ten park yerine A* mesafesi.
+- Çıkışa yürüme       = park yerinden en yakın ÇIKIŞ'a A* mesafesi.
+
+Karar çekirdeği — kalış süresi (t) verildiğinde — sürekli maliyet fonksiyonudur:
+
+    C_i = | d_i - (ALPHA * t) |        (en küçük C_i'li boş yer seçilir)
+
+Yani t saat kalacak araç için ideal park mesafesi ALPHA*t birimdir; bu ideale en
+yakın yer atanır -> kısa kalan kapıya yakın, uzun kalan derine gider (sirkülasyon
+optimizasyonu). Süre verilmezse maliyet fonksiyonu devre dışıdır; o zaman tercihe
+(girişe/çıkışa yakın) göre en yakın yer seçilir.
 
 Adımlar:
   (a) Boş park yerlerini al, (b) araç tipi/şarj ihtiyacına göre filtrele,
-  (c) her aday için en yakın girişten sürüş ve en yakın çıkışa yürüme mesafesini
-      A* ile hesapla, (d) tercihe göre en uygun yeri seç, (e) sonucu döndür.
+  (c) her aday için girişten sürüş (d_i) ve en yakın çıkışa yürüme mesafesini A*
+      ile hesapla, (d) maliyet/tercihe göre en uygun yeri seç, (e) sonucu döndür.
 """
 
 import config
@@ -37,18 +47,11 @@ def _best_drive(node, entrance=None):
     return best_path, best
 
 
-def _preferred_zone(duration_hours):
-    """Kalış süresine göre tercih edilen bölge. None = süre etkisi yok.
-
-    Kısa kalış çıkışa/kapıya yakın (hızlı giriş-çıkış), uzun kalış ortaya
-    (kapı trafiğini şişirmesin) yönlendirilir. Aradaki süreler nötr bırakılır."""
+def _ideal_distance(duration_hours):
+    """t saat kalış için ideal park mesafesi (ALPHA*t). None = süre verilmedi."""
     if duration_hours is None:
         return None
-    if duration_hours <= config.SHORT_STAY_MAX_HOURS:
-        return "çıkış yakını"
-    if duration_hours >= config.LONG_STAY_MIN_HOURS:
-        return "orta"
-    return None
+    return config.ALPHA_DISTANCE_PER_HOUR * duration_hours
 
 
 def _best_walk(node):
@@ -79,14 +82,14 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
     Sürücü isteğine en uygun boş park yerini bulur.
 
     entrance      : sürücünün girdiği kapı düğümü (None = en yakın giriş).
-    duration_hours: tahmini kalış süresi; verilirse uygun olmayan bölgedeki
-                    yerlere config.ZONE_PENALTY eklenerek turnover optimize edilir.
+    duration_hours: tahmini kalış süresi (saat). Verilirse karar MALİYET
+                    FONKSİYONU ile verilir: C_i = |d_i - ALPHA*t| (en küçük seçilir).
 
-    Skor (sözlüksel, küçük = iyi): (bölge_uymazlığı, temel_mesafe). Süre verilirse
-    önce uygun bölge (kısa->çıkış yakını, uzun->orta) seçilir, o bölge içinde en
-    yakın yere gidilir; uygun bölgede yer yoksa mesafeye göre en iyiye düşülür.
-    Temel mesafe tercihe göre sürüş ya da çıkışa yürümedir.
-    Döner: {spot_id, path, distance, walk_to_exit, spot} ya da None.
+    Skor (küçük = iyi):
+      - Süre verilmişse: maliyet = |sürüş_mesafesi - ALPHA*süre|  (ideale yakınlık).
+      - Süre verilmemişse: maliyet = tercihe göre temel mesafe (nearest_exit ->
+        çıkışa yürüme; aksi halde girişten sürüş).
+    Döner: {spot_id, path, distance, walk_to_exit, cost, spot} ya da None.
     """
     all_spots = parking_state.get_state() if spots is None else spots
     empty_spots = [s for s in all_spots if not s["occupied"]]
@@ -96,24 +99,26 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
         return None
 
     use_walk = (preference == "nearest_exit")
-    pref_zone = _preferred_zone(duration_hours)
+    ideal = _ideal_distance(duration_hours)               # ALPHA*t ya da None
     best = None
-    best_key = None
+    best_cost = None
 
     for s in candidates:
         node = s["node_id"]
-        drive_path, drive = _best_drive(node, entrance)   # girişten sürüş
+        drive_path, drive = _best_drive(node, entrance)   # d_i: girişten sürüş
         walk = _best_walk(node)                           # en yakın çıkışa yürüme
-        base = walk if use_walk else drive
-        zone_miss = 1 if (pref_zone and s["zone"] != pref_zone) else 0
-        key = (zone_miss, base)                           # bölge birincil, mesafe ikincil
-        if best_key is None or key < best_key:
-            best_key = key
+        if ideal is not None:
+            cost = abs(drive - ideal)                     # C_i = |d_i - ALPHA*t|
+        else:
+            cost = walk if use_walk else drive            # süre yoksa tercihe göre
+        if best_cost is None or cost < best_cost:
+            best_cost = cost
             best = {
                 "spot_id": s["id"],
                 "path": drive_path,
                 "distance": round(drive, 2),
                 "walk_to_exit": round(walk, 2),
+                "cost": round(cost, 2),
                 "spot": s,
             }
 

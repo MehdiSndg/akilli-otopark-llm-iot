@@ -433,19 +433,36 @@ Görselleştirme katmanı web'e taşındı; backend (MQTT/SQLite/A*/Gemini) AYNE
       ile, API uçtan uca canlı test edildi. pygame UI (ui/) hâlâ duruyor ama BİRİNCİL
       arayüz artık web. Çalıştırma: `python -m web.server` → http://127.0.0.1:8000
 
-**Faz 5 — Entegrasyon (web yoluyla büyük ölçüde tamamlandı)**
-- [x] G5.1 — Tek komutla başlatma web/server.py ile sağlanıyor (simülatör + MQTT abonesi
-      + UI birlikte). (main.py hâlâ eski pygame yolunu başlatıyor; istenirse web'e çevrilir.)
-- [x] G5.2 — Uçtan uca akış API ile doğrulandı: metin→Gemini function calling→allocator→
-      görsel yönlendirme (normal/engelli/ev, kalış süresi, sol/sağ giriş senaryoları).
+**Revizyon v4 — Maliyet fonksiyonu + entegrasyon (akademik doküman hizalaması)**
+Kullanıcı projeyi akademik bir dönem raporu formatına hizaladı. Veritabanı (SQLite)
+ve LLM korundu; web + pygame ikisi de tutuldu. Asıl değişiklik karar çekirdeğinde:
+- **Maliyet fonksiyonu:** Bölge-tabanlı sözlüksel skor kaldırıldı; yerine dokümandaki
+  sürekli formül kondu: **C_i = |d_i − ALPHA·t|** (d_i = girişten A* sürüş mesafesi,
+  t = kalış süresi saat, ALPHA = config.ALPHA_DISTANCE_PER_HOUR = 5.0). En küçük C_i'li
+  boş yer atanır → kısa kalan kapıya yakın, uzun kalan derine (sirkülasyon). Süre
+  yoksa tercihe göre en yakın. allocator sonucu artık `cost` alanı da döndürür.
+  (config'ten SHORT_STAY_MAX_HOURS / LONG_STAY_MIN_HOURS çıkarıldı.)
+- **main.py (G5.1):** Artık çalışır — `python main.py` web sunucusunu (uvicorn) başlatır;
+  `python main.py --pygame` alternatif masaüstü arayüzü açar. Backend thread'leri web
+  lifespan'inde otomatik başlar.
+- **app.js düzeltmesi:** Bozuk/ölü renk değeri (`mallTop: "#4a melts"`, geçersiz CSS,
+  zaten ezilmiş yinelenen anahtar) temizlendi.
+- **README (G5.4):** Web mimarisi + maliyet fonksiyonu + çalıştırma komutlarıyla güncellendi.
+- Testler **23→25** (maliyet fonksiyonu: kısa→kapıya yakın, orta→orta, uzun→derin + cost alanı).
+
+**Faz 5 — Entegrasyon (tamamlandı)**
+- [x] G5.1 — main.py tek komutla başlatma (web varsayılan; --pygame alternatif). Simülatör +
+      MQTT abonesi web lifespan'inde otomatik başlar/temiz kapanır.
+- [x] G5.2 — Uçtan uca akış API ile doğrulandı: metin→(Gemini ya da keyword yedeği)→allocator
+      maliyet fonksiyonu→görsel yönlendirme (normal/engelli/ev, kalış süresi, giriş senaryoları).
 - [x] G5.3 — Hata/uç durumlar: broker kapalı→brokersız yedek; Gemini 429/503→keyword
       yedeği + nazik not; uygun yer yok→nazik mesaj.
-- [ ] G5.4 — README'yi web mimarisiyle güncelle + ekran görüntüleri ekle.
+- [x] G5.4 — README web mimarisi + maliyet fonksiyonuyla güncellendi (ekran görüntüsü kullanıcıda).
 
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
-**Sıradaki:** G5.4 (README + ekran görüntüsü), sonra Faz 6 (sunum). İsteğe bağlı:
-main.py'yi web sunucusunu başlatacak şekilde sadeleştirme.
+**Sıradaki:** Faz 6 (sunum içeriği + demo provası). İsteğe bağlı: dokümandaki MySQL
+tablo tasarımını (otopark_durum / arac_kayit) SQLite şemasına opsiyonel uyarlama.
 
 ### Notlar / Kararlar
 - Python 3.12.10 kullanılıyor (plan 3.11+ diyordu, uyumlu).

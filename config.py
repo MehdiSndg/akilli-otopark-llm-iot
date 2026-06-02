@@ -48,15 +48,26 @@ DAY_LENGTH_SEC = 240           # Bir simüle günün gerçek saniye süresi (dem
 
 
 # ---------------------------------------------------------------------------
-# Kalış süresine göre yerleştirme (turnover optimizasyonu)
+# Kalış süresine göre yerleştirme — Maliyet Fonksiyonu (turnover optimizasyonu)
 # ---------------------------------------------------------------------------
-# Kısa kalanlar çıkışa/AVM kapısına yakın (hızlı giriş-çıkış, az yürüme), uzun
-# kalanlar ortaya (kapı yakınını kısa kalanlara bırak) yerleştirilir. Süre
-# verildiğinde allocator önce UYGUN BÖLGEYİ seçer, o bölge içinde en yakın yere
-# yönlendirir (sözlüksel skor: bölge birincil, mesafe ikincil). Uygun bölgede
-# boş yer yoksa mesafeye göre en iyi yere düşer.
-SHORT_STAY_MAX_HOURS = 2       # <= bu saat: kısa kalış -> "çıkış yakını" tercih
-LONG_STAY_MIN_HOURS = 4        # >= bu saat: uzun kalış -> "orta" tercih
+# Karar çekirdeği sürekli bir maliyet fonksiyonudur. Her boş park yeri (P_i) için:
+#
+#       C_i = | d_i - (ALPHA * t) |
+#
+#   d_i   : aracın girdiği kapıdan o park yerine A* sürüş mesafesi (ızgara birimi)
+#   t     : aracın bildirdiği tahmini kalış süresi (saat)
+#   ALPHA : mesafe-zaman ağırlık katsayısı (otoparkın fiziksel büyüklüğüne göre)
+#
+# Mantık: t saat kalacak araç için İDEAL park mesafesi (ALPHA * t) birimdir; bu
+# ideale en yakın boş yer seçilir (min C_i). Böylece KISA kalanlar kapıya yakın
+# (hızlı giriş-çıkış, yüksek sirkülasyon), UZUN kalanlar daha derindeki yerlere
+# yönlendirilir; otoparkın en değerli alanları (kapı önleri) gün içinde verimli
+# kullanılır. Süre verilmezse maliyet fonksiyonu devreye girmez; tercihe
+# (girişe/çıkışa yakın) göre en yakın yer seçilir.
+#
+# ALPHA seçimi: en derin yerlerin sürüş mesafesi ~40-60 birim; tipik en uzun
+# kalış ~8-10 saat. ALPHA=5 -> 8 saatlik araç ~40 birim derinliğe yönelir.
+ALPHA_DISTANCE_PER_HOUR = 5.0
 
 
 # ---------------------------------------------------------------------------
