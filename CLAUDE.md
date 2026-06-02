@@ -489,10 +489,37 @@ JS konsolu/animasyon/araç durumu incelendi. Bulunan ve düzeltilen hatalar:
 - NOT: Gemini günlük kotası (20/gün) test sırasında tükendi → LLM yolu kodu doğru ama
   bugün çoğu istek keyword yedeğine düşüyor (kota ertesi gün sıfırlanır).
 
+**Faz 7 — IoT/AIoT genişletmeleri (kullanıcı isteğiyle eklendi, ders kapsamı güçlendirme)**
+Proje kapsamını "Nesnelerin Yapay Zekası" dersine daha uygun hale getirmek için
+IoT sensing/veri/güvenilirlik katmanı derinleştirildi. Hepsi backend API + canlı
+test edildi; canvas görselleri kullanıcıda doğrulanacak.
+- [x] DB şema v2: sensor_health / events / occupancy_samples tabloları + spots'a
+      reserved & last_change; şema sürümü değişince otomatik drop/recreate.
+- [x] MQTT zenginleştirme: per-spot topic hiyerarşisi (otopark/spots/<bölüm>/<id>),
+      QoS 1, retained, LWT (otopark/gateway/status — süreç çökerse "offline"),
+      sensör sağlık telemetrisi (otopark/health/<id>: batarya/sinyal/çevrimiçi).
+      Abone wildcard ile dinleyip topic'e göre yönlendirir. Test: per-spot akış,
+      240/240 taze telemetri, gateway online/offline doğrulandı.
+- [x] Anomali tespiti (backend/anomaly.py): çevrimdışı sensör, takılı sensör
+      (çevrimdışı ama "dolu" raporluyor), düşük pil. Tipler ayrık + offline
+      sayısıyla sınırlı (panel gürültüye boğulmaz). Simülatörde 5 zayıf sensör
+      karışık başlangıç piliyle demo içeriği üretir. API /api/anomalies.
+- [x] Rezervasyon: spots.reserved; allocator rezerveyi dışlar; /api/reserve +
+      /api/cancel_reservation; sweeper zaman aşımını/park edilen rezervasyonu
+      temizler; araç park edince set_occupied rezervasyonu otomatik kaldırır.
+- [x] Analitik (backend/analytics.py): doluluk zaman serisi, ortalama kalış süresi
+      (olay eşleme, simüle-dakika), bölge doluluk oranları, spot kullanım sıklığı
+      (ısı haritası). API /api/analytics.
+- [x] Web UI: IoT sistem durumu satırı (ağ geçidi + sensör filosu + anomali rozeti/
+      liste, anomalili yerler haritada işaretli), "Yeri ayırt" rezervasyon butonu
+      (rezerve yerler turuncu kesikli + R), Canvas analitik kaplama (zaman çizgisi +
+      bölge bar), ısı haritası toggle, sesli giriş (Web Speech API tr-TR).
+
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
-**Sıradaki:** Faz 6 (sunum içeriği + demo provası). İsteğe bağlı: dokümandaki MySQL
-tablo tasarımını (otopark_durum / arac_kayit) SQLite şemasına opsiyonel uyarlama.
+**Sıradaki:** Faz 6 (sunum içeriği + demo provası) — artık IoT katmanı çok daha
+zengin: MQTT QoS/retain/LWT, sensör telemetrisi, anomali/bakım, rezervasyon,
+analitik, sesli giriş anlatılacak. İsteğe bağlı: gerçek ESP32/kamera-CV sensörü.
 
 ### Notlar / Kararlar
 - Python 3.12.10 kullanılıyor (plan 3.11+ diyordu, uyumlu).
