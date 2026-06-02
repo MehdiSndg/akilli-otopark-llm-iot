@@ -224,8 +224,8 @@ tamamla.
       yerleri al, (b) araç tipi/şarj ihtiyacına göre filtrele, (c) tercihe göre
       başlangıç/hedef düğümünü belirle, (d) her aday için A* mesafesini hesapla,
       (e) en küçük mesafeli yeri seç. Sonuç: spot_id, yol (düğüm listesi), mesafe.
-- [ ] **G2.4** (Bonus) Çoklu araç dengeli atama: aynı anda gelen birden çok araç için
-      greedy atama; istersek Hungarian algoritması ile optimal atama.
+- [x] **G2.4** Çoklu araç dengeli atama: Hungarian (Kuhn-Munkres) ile optimal atama —
+      aynı anda gelen birden çok araç çakışmadan en uygun yerlere dağıtılır.
 - [x] **G2.5** `tests/test_astar.py` ve `tests/test_allocator.py`: bilinen küçük bir
       grafta beklenen sonuçları doğrula.
 
@@ -333,7 +333,7 @@ pytest
 - [x] G1.4 — backend/parking_state.py: get_state / get_empty_spots / summary okuma katmanı (2026-06-01).
 - [x] G1.5 — Uçtan uca test geçti: sensör→MQTT→abone→DB akışı doğrulandı (2026-06-01).
 
-**Faz 2 — Algoritma katmanı (G2.4 hariç tamamlandı)**
+**Faz 2 — Algoritma katmanı (tamamlandı)**
 - [x] G2.1 — algorithm/graph.py: **gerçekçi AVM düzeni** — çift sıralı park bantları
       (double-loaded aisle) + yatay araç yolları + dikey bağlantı yolları (cross-lane)
       = ızgara yol ağı. Giriş sol-alt, yaya çıkışı/AVM kapısı üst-orta. ParkingSpot +
@@ -341,7 +341,12 @@ pytest
 - [x] G2.2 — algorithm/astar.py: saf Python A*, Öklid sezgisel (2026-06-01).
 - [x] G2.3 — algorithm/allocator.py: find_best_parking_spot — filtre + A* mesafe +
       tercih (girişe/çıkışa yakın) ile en uygun yeri seçer (2026-06-01).
-- [ ] G2.4 — (Ertelendi: Hungarian çoklu atama; kullanıcı onayıyla sonraya bırakıldı.)
+- [x] G2.4 — algorithm/hungarian.py: saf Python Hungarian (Kuhn-Munkres, O(n^3),
+      dikdörtgen destekli) + allocator.allocate_multiple: aynı anda gelen birden
+      çok aracı OPTIMAL atar (iki araç asla aynı yere gitmez; toplam mesafeyi en
+      küçük yapar). Giriş/çıkış A* mesafeleri önbelleğe alınır (5 araç × 240 yer
+      ~247 ms). tests/test_hungarian.py (4) + tests/test_multi_allocator.py (7)
+      (2026-06-02).
 - [x] G2.5 — tests/test_astar.py (3) + tests/test_allocator.py (5): 9 test geçti (2026-06-01).
 
 **Faz 3 — LLM katmanı (tamamlandı)**
@@ -497,8 +502,9 @@ tablo tasarımını (otopark_durum / arac_kayit) SQLite şemasına opsiyonel uya
   client.py'de genişletme noktası olarak duruyor (henüz implemente değil).
 - Gemini bazen geçici 503 (aşırı yük) döndürüyor; client.py'de retry + orchestrator'da
   keyword yedeği var, sistem LLM çökse de çalışıyor (demo güvencesi).
-- Ertelenenler (kullanıcı onayıyla): FastAPI REST katmanı, Hungarian çoklu atama.
-  Tek araç akışı önce bitirilecek.
+- Hungarian çoklu atama (G2.4) tamamlandı: algorithm/hungarian.py +
+  allocator.allocate_multiple. (UI/LLM'e henüz bağlanmadı; tek araç akışı
+  birincil, çoklu atama algoritma+test düzeyinde hazır.)
 - **Kapasite revize edildi (kullanıcı isteği):** Başlangıçtaki 50'lik basit ızgara
   yerine gerçekçi AVM otoparkı seçildi → **240 yer** (5 bant × 2 sıra × 24 sütun),
   6 yatay yol + 4 dikey bağlantı yolu (sütun 0/8/16/23). Tek kat. config.py'de
@@ -515,4 +521,4 @@ tablo tasarımını (otopark_durum / arac_kayit) SQLite şemasına opsiyonel uya
 - LLM sağlayıcısı kesinleşecek: Ollama (yerel, ücretsiz) mı, API mı? Varsayılan: Ollama.
 - Park yeri sayısı: ~~başlangıç 50~~ → **240'a çıkarıldı** (gerçekçi AVM düzeni, çözüldü).
 - FastAPI REST katmanı eklenecek mi? Varsayılan: hayır (zaman kalırsa bonus).
-- Çoklu araç atama (Hungarian) yapılacak mı? Varsayılan: bonus, tek araç akışı önce bitsin.
+- ~~Çoklu araç atama (Hungarian) yapılacak mı?~~ → **Yapıldı** (G2.4, algoritma+test).

@@ -27,10 +27,17 @@ Adımlar:
 import config
 from algorithm.graph import build_parking, ENTRANCES, EXITS
 from algorithm.astar import a_star
+from algorithm.hungarian import hungarian
 from backend import parking_state
 
 # Statik yerleşim/graf yalnızca bir kez kurulur (doluluk DB'den gelir).
 _SPOTS, _GRAPH = build_parking()
+
+# Çoklu atamada (allocate_multiple) yanlış tipte yere atamayı son çare yapan ceza.
+# Mesafe/maliyet birkaç yüzü geçmediğinden bu büyük katsayı, doğru tipte yer
+# varken aracı asla yanlış tipe koymamayı garanti eder; hiç uygun tip yoksa
+# (mecbur kalınca) yine de bir yer bulunur.
+TYPE_PENALTY = 1e6
 
 
 def _best_drive(node, entrance=None):
@@ -63,13 +70,18 @@ def _best_walk(node):
     return best
 
 
-def _filter_candidates(empty_spots, vehicle_type, needs_charging):
+def _required_type(vehicle_type, needs_charging):
+    """Araç tipi/şarj ihtiyacının gerektirdiği park yeri tipi."""
     if vehicle_type == "ev" or needs_charging:
-        candidates = [s for s in empty_spots if s["type"] == "ev_charging"]
-    elif vehicle_type == "disabled":
-        candidates = [s for s in empty_spots if s["type"] == "disabled"]
-    else:
-        candidates = [s for s in empty_spots if s["type"] == "normal"]
+        return "ev_charging"
+    if vehicle_type == "disabled":
+        return "disabled"
+    return "normal"
+
+
+def _filter_candidates(empty_spots, vehicle_type, needs_charging):
+    req_type = _required_type(vehicle_type, needs_charging)
+    candidates = [s for s in empty_spots if s["type"] == req_type]
     if not candidates:
         candidates = list(empty_spots)   # uygun özel yer yoksa herhangi bir boş yer
     return candidates
@@ -123,3 +135,111 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
             }
 
     return best
+
+
+def _request_cost_row(req, empty, drive_cache, walk_cache):
+    """Bir araç isteği için tüm boş yerlere maliyet + yol bilgisini hesapla.
+
+    drive_cache : {(entrance, node) -> (path, dist)} sürüş mesafesi önbelleği.
+    walk_cache  : {node -> dist} çıkışa yürüme önbelleği (istekten bağımsız).
+    Aynı girişi paylaşan araçlar A*'yı tekrar hesaplamaz.
+
+    Maliyet, tek-araç find_best_parking_spot ile AYNI çekirdeği kullanır:
+      - süre verilmişse  : |sürüş_mesafesi - ALPHA*süre|   (ideale yakınlık)
+      - süre verilmemişse: tercihe göre temel mesafe (nearest_exit -> yürüme)
+    Buna yanlış araç tipine atama için TYPE_PENALTY eklenir (son çare).
+
+    Döner: (costs, info) — costs[j] skaler maliyet, info[j] = (drive_path,
+    drive, walk).
+    """
+    vt = req.get("vehicle_type", "normal")
+    pref = req.get("preference", "any")
+    needs = req.get("needs_charging", False)
+    dur = req.get("duration_hours")
+    ent = req.get("entrance")
+
+    req_type = _required_type(vt, needs)
+    ideal = _ideal_distance(dur)                            # ALPHA*t ya da None
+    use_walk = (pref == "nearest_exit")
+
+    costs, info = [], []
+    for s in empty:
+        node = s["node_id"]
+        key = (ent, node)
+        if key not in drive_cache:
+            drive_cache[key] = _best_drive(node, ent)       # girişten sürüş
+        drive_path, drive = drive_cache[key]
+        if node not in walk_cache:
+            walk_cache[node] = _best_walk(node)             # en yakın çıkışa yürüme
+        walk = walk_cache[node]
+        if ideal is not None:
+            base = abs(drive - ideal)                       # C_i = |d_i - ALPHA*t|
+        else:
+            base = walk if use_walk else drive              # süre yoksa tercihe göre
+        type_miss = 0 if s["type"] == req_type else 1
+        costs.append(type_miss * TYPE_PENALTY + base)
+        info.append((drive_path, round(drive, 2), round(walk, 2)))
+    return costs, info
+
+
+def allocate_multiple(requests, spots=None):
+    """Aynı anda gelen birden çok aracı boş yerlere OPTIMAL (Hungarian) atar.
+
+    Greedy atamadan farkı: iki aracı asla aynı yere göndermez ve aracların
+    TOPLAM maliyetini en küçük yapar (bir aracı biraz uzağa yollamak diğerini
+    çok daha iyi yere koyuyorsa onu seçer).
+
+    requests : her biri {vehicle_type, preference, needs_charging,
+               duration_hours, entrance} içeren dict listesi (eksik alanlar
+               find_best_parking_spot varsayılanlarına düşer).
+    spots    : None ise canlı doluluk (parking_state) kullanılır.
+    Döner    : requests ile AYNI sırada sonuç listesi; her eleman
+               {spot_id, path, distance, walk_to_exit, spot} ya da None
+               (o araca verilecek boş yer kalmadıysa).
+    """
+    n = len(requests)
+    if n == 0:
+        return []
+
+    all_spots = parking_state.get_state() if spots is None else spots
+    empty = [s for s in all_spots if not s["occupied"]]
+    if not empty:
+        return [None] * n
+
+    # Maliyet matrisi + yol bilgisi (her araç × her boş yer).
+    # Önbellekler aynı giriş/çıkış A* hesabını araçlar arasında paylaştırır.
+    cost, info = [], []
+    drive_cache, walk_cache = {}, {}
+    for req in requests:
+        c, inf = _request_cost_row(req, empty, drive_cache, walk_cache)
+        cost.append(c)
+        info.append(inf)
+
+    m = len(empty)
+    if n <= m:
+        assign = hungarian(cost)                       # araç -> yer
+    else:
+        # Araç sayısı yerden fazla: devrik çöz, fazla araçlar boşta kalır
+        tcost = [[cost[i][j] for i in range(n)] for j in range(m)]
+        spot_assign = hungarian(tcost)                 # yer -> araç
+        assign = [-1] * n
+        for j, i in enumerate(spot_assign):
+            if i != -1:
+                assign[i] = j
+
+    results = []
+    for i in range(n):
+        j = assign[i]
+        if j == -1:                                    # bu araca yer kalmadı
+            results.append(None)
+            continue
+        s = empty[j]
+        drive_path, drive, walk = info[i][j]
+        results.append({
+            "spot_id": s["id"],
+            "path": drive_path,
+            "distance": drive,
+            "walk_to_exit": walk,
+            "spot": s,
+        })
+    return results
