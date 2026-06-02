@@ -12,6 +12,25 @@
     <section class="lot-panel">
       <canvas id="lot"></canvas>
       <div class="legend" id="legend"></div>
+
+      <!-- Analitik kaplama (gizli; "Analitik" butonu açar) -->
+      <div class="overlay" id="analytics" hidden>
+        <div class="overlay-head">
+          <h2>📊 Analitik & Telemetri</h2>
+          <button type="button" id="analytics-close" class="x">✕</button>
+        </div>
+        <div class="overlay-body">
+          <div class="metric-row" id="analytics-metrics"></div>
+          <div class="chart-block">
+            <span class="chart-title">Doluluk — zaman içinde</span>
+            <canvas id="chart-time" height="150"></canvas>
+          </div>
+          <div class="chart-block">
+            <span class="chart-title">Bölge doluluk oranları</span>
+            <canvas id="chart-sections" height="150"></canvas>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Sağ: asistan paneli -->
@@ -28,16 +47,29 @@
         <div class="stat emp"><span class="num" id="stat-emp">—</span><span class="lab">Boş</span></div>
       </div>
 
+      <!-- IoT sistem durumu: ağ geçidi + sensör filosu + anomali rozeti -->
+      <div class="sysrow">
+        <span class="pill" id="gateway"><span class="dot"></span> Ağ geçidi</span>
+        <span class="pill" id="sensors">📡 —/—</span>
+        <button type="button" class="pill alert" id="anomaly-badge" hidden>⚠ <span id="anomaly-count">0</span></button>
+      </div>
+      <div class="anomaly-list" id="anomaly-list" hidden></div>
+
       <div class="entrance-sel" id="entrance-sel">
         <span class="field-label">Giriş kapısı</span>
         <div class="seg" id="seg"></div>
       </div>
 
-      <button type="button" id="multi" class="multi-btn">🚗 Aynı anda 3 araç (optimal atama)</button>
+      <div class="actions">
+        <button type="button" id="multi" class="act-btn">🚗 Aynı anda 3 araç</button>
+        <button type="button" id="analytics-btn" class="act-btn">📊 Analitik</button>
+        <button type="button" id="heatmap-btn" class="act-btn">🔥 Isı haritası</button>
+      </div>
 
       <div class="chat" id="chat"></div>
 
       <form class="composer" id="composer">
+        <button type="button" id="mic" class="mic-btn" title="Sesle söyle">🎤</button>
         <input id="msg" type="text" autocomplete="off"
                placeholder="Örn: Elektrikli arabam var, çıkışa yakın bir yer...">
         <button type="submit" id="send">Gönder</button>

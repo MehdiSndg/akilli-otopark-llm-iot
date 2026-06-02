@@ -20,6 +20,9 @@ let L = null, T = null;
 let routes = [];        // aktif yönlendirme rotaları: {pts, car, spotId} (çoklu araç destekli)
 // Çoklu atamada her araca ayrı renk (tek araçta ilk renk = sarı kullanılır)
 const HERO_COLORS = ["#f5c846","#5ec2f0","#f08a5e","#9d7cf0","#5ef0a8"];
+let reservedMap = {};   // spot_id -> true (rezerve, dolu değil)
+let anomalySpots = {};  // spot_id -> true (arızalı/çevrimdışı sensör — haritada işaretli)
+let heatmapOn = false, heatData = {}, heatMax = 1;   // ısı haritası (kullanım sıklığı)
 let vocc = {};          // görsel doluluk (animasyon gecikmeli)
 let prevOcc = null;     // bir önceki gerçek doluluk (fark hesaplamak için)
 let cars = [];          // gerçek olaylarla tetiklenen hareketli araçlar
@@ -274,15 +277,34 @@ function drawSpots(now){
   const pulse=0.5+0.5*Math.sin(now/240);
   for(const s of L.spots){
     const [cx,cy]=S(s.x,s.y), x=cx-sw/2, y=cy-sh/2, upper=s.face==="up";
-    ctx.fillStyle=C.slot; rr(x,y,sw,sh,2); ctx.fill();
+    // Isı haritası modunda boş yuvalar kullanım sıklığına göre renklenir
+    ctx.fillStyle = (heatmapOn && !vocc[s.id]) ? heatColor(heatData[s.id]||0) : C.slot;
+    rr(x,y,sw,sh,2); ctx.fill();
     ctx.strokeStyle=C.paint; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,y);ctx.lineTo(x,y+sh); ctx.moveTo(x+sw,y);ctx.lineTo(x+sw,y+sh);
     const by=upper?y+sh:y; ctx.moveTo(x,by);ctx.lineTo(x+sw,by); ctx.stroke();
     if(vocc[s.id]) drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw);
     else if(s.type==="ev_charging"){ ctx.strokeStyle=C.ev;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); bolt(cx,cy,Math.min(sw,sh)*0.32); }
     else if(s.type==="disabled"){ ctx.strokeStyle=C.disabled;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); wheelchair(cx,cy,Math.min(sw,sh)*0.3); }
+    // Rezerve (dolu değil): turuncu kesikli çerçeve + R
+    if(reservedMap[s.id] && !vocc[s.id]){
+      ctx.setLineDash([4,3]); ctx.strokeStyle=C.exit; ctx.lineWidth=2;
+      rr(x-1,y-1,sw+2,sh+2,3); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle=C.exit; ctx.font=`700 ${Math.max(sh*0.5,8)}px sans-serif`; ctx.textAlign="center";
+      ctx.fillText("R", cx, cy+sh*0.18);
+    }
+    // Anomali (arızalı/çevrimdışı sensör): kırmızı uyarı halkası
+    if(anomalySpots[s.id]){ ctx.strokeStyle="rgba(239,138,142,0.95)"; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(cx,cy,Math.max(sw,sh)*0.62,0,7); ctx.stroke(); }
     if(routes.some(r=>r.spotId===s.id)){ ctx.strokeStyle=`rgba(245,200,70,${0.5+0.5*pulse})`;ctx.lineWidth=3;rr(x-4,y-4,sw+8,sh+8,5);ctx.stroke(); }
   }
+}
+
+// Isı haritası rengi: düşük=mavi, orta=sarı, yüksek=kırmızı (kullanım sıklığı)
+function heatColor(v){
+  const m = heatMax || 1, t = Math.min(1, v/m);
+  const r = Math.round(40 + t*200), g = Math.round(70 + (1-Math.abs(t-0.5)*2)*120), b = Math.round(180*(1-t)+40);
+  return `rgb(${r},${g},${b})`;
 }
 function drawGates(){
   ctx.textAlign="center"; ctx.font=`700 ${Math.max(T.scale*0.6,11)}px "Segoe UI",sans-serif`;
@@ -373,6 +395,8 @@ function connectWS(){
     stTotal.textContent=d.counts.total; stOcc.textContent=d.counts.occupied; stEmp.textContent=d.counts.empty;
     if(d.sim && clockEl){ const h=Math.floor(d.sim.hour), m=Math.floor((d.sim.hour-h)*60);
       clockEl.textContent=`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}  ·  Yoğunluk: ${d.sim.busy}`; }
+    reservedMap = d.reserved || {};
+    updateSysRow(d);
     if(prevOcc===null){ vocc={...d.occupancy}; prevOcc=d.occupancy; return; }  // ilk kare: animasyonsuz
     for(const id in d.occupancy){
       const now=d.occupancy[id], was=prevOcc[id];
@@ -384,7 +408,7 @@ function connectWS(){
   ws.onclose=()=>setTimeout(connectWS,1500);
 }
 function buildLegend(){
-  const items=[[C.slot,"Boş"],[CARS[0],"Dolu"],[C.ev,"Şarjlı"],[C.disabled,"Engelli"],[C.suggested,"Önerilen"],[C.yourCar,"Sizin aracınız"]];
+  const items=[[C.slot,"Boş"],[CARS[0],"Dolu"],[C.ev,"Şarjlı"],[C.disabled,"Engelli"],[C.exit,"Rezerve"],[C.suggested,"Önerilen"],[C.yourCar,"Sizin aracınız"]];
   document.getElementById("legend").innerHTML=items.map(([c,t])=>`<span class="item"><span class="sw" style="background:${c}"></span>${t}</span>`).join("");
 }
 function buildEntranceSel(){
@@ -418,11 +442,128 @@ form.addEventListener("submit", async (e)=>{
     const r=await fetch("/api/request",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,entrance:entranceId})});
     const data=await r.json(); think.remove();
     bubble("system", data.reply, `kaynak: ${data.source}`);
-    if(data.result&&data.result.path_points){ routes=[{pts:data.result.path_points, spotId:data.result.spot_id, car:new Hero(data.result.path_points)}]; }
+    if(data.result&&data.result.path_points){
+      routes=[{pts:data.result.path_points, spotId:data.result.spot_id, car:new Hero(data.result.path_points)}];
+      addReserveButton(data.result.spot_id);     // "Yeri ayırt" seçeneği
+    }
     else { routes=[]; }
   }catch(err){ think.remove(); bubble("system","Bağlantı hatası: "+err.message); }
   finally{ sendBtn.disabled=false; input.disabled=false; input.focus(); }
 });
+
+/* ---------- Rezervasyon ---------- */
+function addReserveButton(spotId){
+  const b=document.createElement("button");
+  b.className="reserve-btn"; b.textContent=`🅿 ${spotId} yerini ayırt`;
+  b.onclick=async ()=>{
+    b.disabled=true;
+    try{
+      const r=await fetch("/api/reserve",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({spot_id:spotId})});
+      const d=await r.json();
+      if(d.ok){ b.textContent=`✓ ${spotId} ayrıldı (${d.timeout_sec|0}sn)`;
+        bubble("info",`${spotId} sizin için rezerve edildi. ${d.timeout_sec|0} sn içinde gelmezseniz serbest bırakılır.`); }
+      else { b.disabled=false; bubble("info","Ayrılamadı: "+d.reason); }
+    }catch(e){ b.disabled=false; bubble("system","Rezervasyon hatası: "+e.message); }
+  };
+  chatEl.appendChild(b); chatEl.scrollTop=chatEl.scrollHeight;
+}
+
+/* ---------- IoT sistem durumu (ağ geçidi + sensör filosu + anomali) ---------- */
+const gatewayEl=document.getElementById("gateway"), sensorsEl=document.getElementById("sensors");
+const anomalyBadge=document.getElementById("anomaly-badge"), anomalyCount=document.getElementById("anomaly-count");
+const anomalyListEl=document.getElementById("anomaly-list");
+function updateSysRow(d){
+  if(d.gateway){ gatewayEl.classList.toggle("online", d.gateway.online); gatewayEl.classList.toggle("offline", !d.gateway.online);
+    gatewayEl.lastChild.textContent = d.gateway.online ? " Ağ geçidi ✓" : " Ağ geçidi ✕"; }
+  if(d.sensors){ sensorsEl.textContent = `📡 ${d.sensors.online}/${d.sensors.total} · %${d.sensors.avg_battery}`; }
+  if(d.anomalies){ const t=d.anomalies.error+d.anomalies.warning;
+    anomalyBadge.hidden = t===0; anomalyCount.textContent = t; }
+}
+anomalyBadge.onclick=async ()=>{
+  if(!anomalyListEl.hidden){ anomalyListEl.hidden=true; anomalySpots={}; return; }
+  try{
+    const d=await (await fetch("/api/anomalies")).json();
+    anomalySpots={}; d.items.forEach(a=>anomalySpots[a.spot_id]=true);
+    anomalyListEl.innerHTML = d.items.length
+      ? d.items.map(a=>`<div class="a-item" data-spot="${a.spot_id}"><span class="a-tag ${a.severity}">${a.severity==="error"?"HATA":"UYARI"}</span>${a.message}</div>`).join("")
+      : '<div class="a-item">Şu an anomali yok ✓</div>';
+    anomalyListEl.hidden=false;
+  }catch(e){ bubble("system","Anomali alınamadı: "+e.message); }
+};
+
+/* ---------- Analitik paneli ---------- */
+const overlay=document.getElementById("analytics");
+document.getElementById("analytics-btn").onclick=openAnalytics;
+document.getElementById("analytics-close").onclick=()=>overlay.hidden=true;
+async function openAnalytics(){
+  overlay.hidden=false;
+  try{
+    const a=await (await fetch("/api/analytics")).json();
+    const peak = a.timeseries.length ? Math.max(...a.timeseries.map(p=>p.occupied)) : 0;
+    const total = a.timeseries.length ? a.timeseries[a.timeseries.length-1].total : 0;
+    document.getElementById("analytics-metrics").innerHTML = [
+      [`${a.avg_stay_minutes} dk`, "Ort. kalış (simüle)"],
+      [`${peak}`, "Zirve doluluk"],
+      [`${a.sections.length}`, "Bölge"],
+      [`${total}`, "Toplam yer"],
+    ].map(([v,l])=>`<div class="metric"><span class="mv">${v}</span><span class="ml">${l}</span></div>`).join("");
+    drawTimeChart(a.timeseries);
+    drawSectionChart(a.sections);
+  }catch(e){ document.getElementById("analytics-metrics").innerHTML = "Analitik alınamadı: "+e.message; }
+}
+function _fit(cv, cssH){ const r=cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  cv.width=Math.max(1,r.width)*dpr; cv.height=cssH*dpr; cv.style.height=cssH+"px";
+  const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); return [c, r.width||cv.width/dpr, cssH]; }
+function drawTimeChart(ts){
+  const cv=document.getElementById("chart-time"); const [c,W,H]=_fit(cv,150);
+  c.clearRect(0,0,W,H); if(!ts.length){ return; }
+  const total=ts[0].total||1, pad=8;
+  c.strokeStyle="#4aa2de"; c.lineWidth=2; c.beginPath();
+  ts.forEach((p,i)=>{ const x=pad+(W-2*pad)*i/Math.max(1,ts.length-1), y=H-pad-(H-2*pad)*(p.occupied/total);
+    i?c.lineTo(x,y):c.moveTo(x,y); });
+  c.stroke();
+  c.strokeStyle="rgba(255,255,255,.08)"; c.beginPath(); c.moveTo(pad,H-pad); c.lineTo(W-pad,H-pad); c.stroke();
+  c.fillStyle="#8a92a4"; c.font="11px sans-serif"; c.textAlign="left";
+  c.fillText("%"+Math.round(ts[ts.length-1].occupied/total*100)+" doluluk (son)", pad, 12);
+}
+function drawSectionChart(secs){
+  const cv=document.getElementById("chart-sections"); const [c,W,H]=_fit(cv,150);
+  c.clearRect(0,0,W,H); if(!secs.length) return;
+  const pad=8, bw=(W-2*pad)/secs.length*0.6, gap=(W-2*pad)/secs.length;
+  secs.forEach((s,i)=>{ const x=pad+gap*i+gap*0.2, h=(H-2*pad-14)*s.rate, y=H-pad-h;
+    c.fillStyle="#4aa2de"; rrc(c,x,y,bw,h,3); c.fill();
+    c.fillStyle="#e4e8f0"; c.font="11px sans-serif"; c.textAlign="center";
+    c.fillText(s.section, x+bw/2, H-pad+11);
+    c.fillStyle="#8a92a4"; c.fillText("%"+Math.round(s.rate*100), x+bw/2, y-3); });
+}
+function rrc(c,x,y,w,h,r){ r=Math.min(r,w/2,h/2); c.beginPath();
+  c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
+  c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+/* ---------- Isı haritası ---------- */
+const heatBtn=document.getElementById("heatmap-btn");
+heatBtn.onclick=async ()=>{
+  heatmapOn=!heatmapOn; heatBtn.classList.toggle("on", heatmapOn);
+  if(heatmapOn){
+    try{ const a=await (await fetch("/api/analytics")).json();
+      heatData=a.heatmap||{}; heatMax=Math.max(1, ...Object.values(heatData)); }
+    catch(e){ heatmapOn=false; heatBtn.classList.remove("on"); }
+  }
+};
+
+/* ---------- Sesli giriş (Web Speech API) ---------- */
+const micBtn=document.getElementById("mic");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if(SR){
+  const rec=new SR(); rec.lang="tr-TR"; rec.interimResults=false; rec.maxAlternatives=1;
+  micBtn.onclick=()=>{ try{ rec.start(); micBtn.classList.add("rec"); }catch(e){} };
+  rec.onresult=(e)=>{ input.value=e.results[0][0].transcript; };
+  rec.onend=()=>{ micBtn.classList.remove("rec"); if(input.value.trim()) form.requestSubmit(); };
+  rec.onerror=()=>micBtn.classList.remove("rec");
+} else {
+  micBtn.title="Tarayıcınız sesli girişi desteklemiyor"; micBtn.disabled=true;
+}
 
 /* ---------- Çoklu araç optimal atama (G2.4 / Hungarian) ---------- */
 // Aynı anda gelen birden çok aracı sunucudaki allocate_multiple ile optimal atar;
