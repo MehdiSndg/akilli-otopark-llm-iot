@@ -93,6 +93,16 @@ html, body {
 }
 .seg button.active { background: var(--accent); color: #fff; font-weight: 600; }
 
+.multi-btn {
+  width: 100%; margin-bottom: 14px;
+  border: 1px solid var(--line); cursor: pointer;
+  background: var(--card); color: var(--text);
+  padding: 10px; border-radius: 10px; font-size: 13.5px; font-weight: 600;
+  transition: background .15s, border-color .15s;
+}
+.multi-btn:hover { background: var(--card-hi); border-color: var(--accent); }
+.multi-btn:disabled { opacity: .5; cursor: default; }
+
 /* Sohbet */
 .chat {
   flex: 1; overflow-y: auto;

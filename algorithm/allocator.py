@@ -61,6 +61,24 @@ def _ideal_distance(duration_hours):
     return config.ALPHA_DISTANCE_PER_HOUR * duration_hours
 
 
+def _spot_cost(drive, walk, use_walk, explicit_pref, ideal):
+    """Bir aday yerin maliyeti (küçük = iyi). Tek-araç ve çoklu-araç ortak çekirdeği.
+
+    Öncelik kuralı:
+      - Açık yön tercihi (girişe/çıkışa yakın) BİRİNCİLDİR: o mesafe doğrudan
+        minimize edilir (çıkışa yakın -> yürüme, girişe yakın -> sürüş). Süre
+        verilse bile tercih ezilmez (kullanıcı net söylediyse ona uyulur).
+      - Tercih "farketmez" + süre verilmişse: sirkülasyon maliyeti |d - ALPHA*t|
+        (kısa kalan kapıya yakın, uzun kalan derine) devreye girer.
+      - Hiçbiri yoksa: girişten sürüş mesafesi (en yakın yer).
+    """
+    if explicit_pref:
+        return walk if use_walk else drive
+    if ideal is not None:
+        return abs(drive - ideal)
+    return drive
+
+
 def _best_walk(node):
     """Park yerinden en yakın çıkışa en kısa yürüme mesafesi."""
     best = float("inf")
@@ -97,10 +115,13 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
     duration_hours: tahmini kalış süresi (saat). Verilirse karar MALİYET
                     FONKSİYONU ile verilir: C_i = |d_i - ALPHA*t| (en küçük seçilir).
 
-    Skor (küçük = iyi):
-      - Süre verilmişse: maliyet = |sürüş_mesafesi - ALPHA*süre|  (ideale yakınlık).
-      - Süre verilmemişse: maliyet = tercihe göre temel mesafe (nearest_exit ->
-        çıkışa yürüme; aksi halde girişten sürüş).
+    Skor (küçük = iyi, _spot_cost):
+      - Açık yön tercihi (girişe/çıkışa yakın) BİRİNCİL: o mesafe minimize edilir
+        (çıkışa yakın -> çıkışa yürüme; girişe yakın -> girişten sürüş). Süre
+        verilse bile tercih ezilmez.
+      - Tercih "farketmez" + süre verilmişse: maliyet = |sürüş - ALPHA*süre|
+        (kısa kalan kapıya yakın, uzun kalan derine — sirkülasyon).
+      - Hiçbiri yoksa: girişten en kısa sürüş.
     Döner: {spot_id, path, distance, walk_to_exit, cost, spot} ya da None.
     """
     all_spots = parking_state.get_state() if spots is None else spots
@@ -111,6 +132,7 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
         return None
 
     use_walk = (preference == "nearest_exit")
+    explicit_pref = preference in ("nearest_entrance", "nearest_exit")
     ideal = _ideal_distance(duration_hours)               # ALPHA*t ya da None
     best = None
     best_cost = None
@@ -119,10 +141,7 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
         node = s["node_id"]
         drive_path, drive = _best_drive(node, entrance)   # d_i: girişten sürüş
         walk = _best_walk(node)                           # en yakın çıkışa yürüme
-        if ideal is not None:
-            cost = abs(drive - ideal)                     # C_i = |d_i - ALPHA*t|
-        else:
-            cost = walk if use_walk else drive            # süre yoksa tercihe göre
+        cost = _spot_cost(drive, walk, use_walk, explicit_pref, ideal)
         if best_cost is None or cost < best_cost:
             best_cost = cost
             best = {
@@ -161,6 +180,7 @@ def _request_cost_row(req, empty, drive_cache, walk_cache):
     req_type = _required_type(vt, needs)
     ideal = _ideal_distance(dur)                            # ALPHA*t ya da None
     use_walk = (pref == "nearest_exit")
+    explicit_pref = pref in ("nearest_entrance", "nearest_exit")
 
     costs, info = [], []
     for s in empty:
@@ -172,10 +192,7 @@ def _request_cost_row(req, empty, drive_cache, walk_cache):
         if node not in walk_cache:
             walk_cache[node] = _best_walk(node)             # en yakın çıkışa yürüme
         walk = walk_cache[node]
-        if ideal is not None:
-            base = abs(drive - ideal)                       # C_i = |d_i - ALPHA*t|
-        else:
-            base = walk if use_walk else drive              # süre yoksa tercihe göre
+        base = _spot_cost(drive, walk, use_walk, explicit_pref, ideal)
         type_miss = 0 if s["type"] == req_type else 1
         costs.append(type_miss * TYPE_PENALTY + base)
         info.append((drive_path, round(drive, 2), round(walk, 2)))

@@ -26,6 +26,7 @@ import uvicorn
 
 import config
 from algorithm.graph import build_parking, ENTRANCES
+from algorithm import allocator
 from backend import database, parking_state
 from llm import orchestrator
 from simulator import sensor_simulator
@@ -128,6 +129,18 @@ class ParkRequest(BaseModel):
     entrance: str | None = None
 
 
+class VehicleRequest(BaseModel):
+    vehicle_type: str = "normal"
+    preference: str = "any"
+    needs_charging: bool = False
+    duration_hours: int | None = None
+    entrance: str | None = None
+
+
+class MultiRequest(BaseModel):
+    requests: list[VehicleRequest]
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
@@ -154,6 +167,34 @@ def do_request(req: ParkRequest):
         result["path_points"] = [[_POS[n][0], _POS[n][1]] for n in result["path"]]
     return {"reply": out["reply"], "result": result,
             "params": out["params"], "source": out["source"]}
+
+
+@app.post("/api/request_multi")
+def do_request_multi(req: MultiRequest):
+    """Çoklu araç OPTIMAL atama (G2.4 / Hungarian).
+
+    Aynı anda gelen birden çok aracı çakışmadan en uygun yerlere dağıtır;
+    her sonuç tarayıcının çizebilmesi için path_points (koordinat) içerir."""
+    reqs = []
+    for v in req.requests:
+        entrance = v.entrance if v.entrance in ENTRANCES else None
+        reqs.append({"vehicle_type": v.vehicle_type, "preference": v.preference,
+                     "needs_charging": v.needs_charging,
+                     "duration_hours": v.duration_hours, "entrance": entrance})
+
+    assigned = allocator.allocate_multiple(reqs)
+    results, total = [], 0.0
+    for res in assigned:
+        if res:
+            total += res["distance"]
+            results.append({
+                "spot_id": res["spot_id"], "spot_type": res["spot"]["type"],
+                "distance": res["distance"], "walk_to_exit": res["walk_to_exit"],
+                "path_points": [[_POS[n][0], _POS[n][1]] for n in res["path"]],
+            })
+        else:
+            results.append(None)
+    return {"results": results, "total_distance": round(total, 2)}
 
 
 @app.websocket("/ws")

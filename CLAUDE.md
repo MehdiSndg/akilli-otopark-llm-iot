@@ -502,9 +502,14 @@ tablo tasarımını (otopark_durum / arac_kayit) SQLite şemasına opsiyonel uya
   client.py'de genişletme noktası olarak duruyor (henüz implemente değil).
 - Gemini bazen geçici 503 (aşırı yük) döndürüyor; client.py'de retry + orchestrator'da
   keyword yedeği var, sistem LLM çökse de çalışıyor (demo güvencesi).
-- Hungarian çoklu atama (G2.4) tamamlandı: algorithm/hungarian.py +
-  allocator.allocate_multiple. (UI/LLM'e henüz bağlanmadı; tek araç akışı
-  birincil, çoklu atama algoritma+test düzeyinde hazır.)
+- Hungarian çoklu atama (G2.4) tamamlandı VE UI'a bağlandı: algorithm/hungarian.py
+  + allocator.allocate_multiple + web POST /api/request_multi + "Aynı anda 3 araç"
+  butonu (her araca ayrı renkte rota/animasyon, çakışmasız optimal atama).
+- **Çıkış tercihi düzeltmesi (kullanıcı bug bildirimi):** Süre verildiğinde
+  C=|d-α·t| maliyeti açık yön tercihini (girişe/çıkışa yakın) EZİYORDU; "çıkışa
+  yakın" istense bile uzak yer veriyordu. Artık _spot_cost ortak çekirdeği: açık
+  yön tercihi BİRİNCİL (o mesafe minimize edilir), |d-α·t| yalnızca tercih
+  "farketmez" iken devreye girer. Regresyon testi eklendi (37 test).
 - **Kapasite revize edildi (kullanıcı isteği):** Başlangıçtaki 50'lik basit ızgara
   yerine gerçekçi AVM otoparkı seçildi → **240 yer** (5 bant × 2 sıra × 24 sütun),
   6 yatay yol + 4 dikey bağlantı yolu (sütun 0/8/16/23). Tek kat. config.py'de

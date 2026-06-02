@@ -121,3 +121,19 @@ def test_cost_field_is_distance_to_ideal():
                                            spots=spots, entrance=ENTRANCES[0])
     ideal = config.ALPHA_DISTANCE_PER_HOUR * 2
     assert abs(res["cost"] - abs(res["distance"] - ideal)) < 0.05
+
+
+def test_explicit_preference_overrides_duration():
+    # REGRESYON: "çıkışa yakın" derken süre verilse bile çıkışa yakın yer gelmeli
+    # (maliyet fonksiyonu açık yön tercihini EZMEMELİ). E-1 kapıya yakın ama çıkışa
+    # uzak; A-20 çıkışa yakın. Kısa süre + çıkışa yakın -> yine A-20 seçilmeli.
+    spots = _spots_with_free({"E-1", "A-20"})
+    near_exit = allocator.find_best_parking_spot("normal", "nearest_exit",
+                                                 duration_hours=1, spots=spots,
+                                                 entrance=ENTRANCES[0])
+    assert near_exit["spot_id"] == "A-20"        # çıkışa yakın (süre ezmedi)
+    # Girişe yakın + uzun süre de tercihi korumalı
+    near_entrance = allocator.find_best_parking_spot("normal", "nearest_entrance",
+                                                     duration_hours=8, spots=spots,
+                                                     entrance=ENTRANCES[0])
+    assert near_entrance["spot_id"] == "E-1"     # girişe yakın (süre ezmedi)

@@ -17,7 +17,9 @@ const canvas = document.getElementById("lot");
 const ctx = canvas.getContext("2d");
 
 let L = null, T = null;
-let suggestedId = null, route = null;
+let routes = [];        // aktif yönlendirme rotaları: {pts, car, spotId} (çoklu araç destekli)
+// Çoklu atamada her araca ayrı renk (tek araçta ilk renk = sarı kullanılır)
+const HERO_COLORS = ["#f5c846","#5ec2f0","#f08a5e","#9d7cf0","#5ef0a8"];
 let vocc = {};          // görsel doluluk (animasyon gecikmeli)
 let prevOcc = null;     // bir önceki gerçek doluluk (fark hesaplamak için)
 let cars = [];          // gerçek olaylarla tetiklenen hareketli araçlar
@@ -162,7 +164,7 @@ function spawnDeparture(spotId){
 
 /* ---------- yönlendirilen araç ---------- */
 class Hero {
-  constructor(pts){ this.pts=pts; this.seg=0; this.t=0; this.done=pts.length<2; this.speed=3.4; this.ang=0; this.off=0.4; this.x=pts[0][0]; this.y=pts[0][1]; this.px=this.x; this.py=this.y; this.id=CARID++; this.speedFactor=1; }
+  constructor(pts, color){ this.pts=pts; this.seg=0; this.t=0; this.done=pts.length<2; this.speed=3.4; this.ang=0; this.off=0.4; this.x=pts[0][0]; this.y=pts[0][1]; this.px=this.x; this.py=this.y; this.id=CARID++; this.speedFactor=1; this.color=color||C.yourCar; }
   update(dt){
     if(this.done)return;
     let rem=this.speed*dt*this.speedFactor;
@@ -185,7 +187,7 @@ class Hero {
     if(this.seg>=this.pts.length-2) off*=(1-this.t);   // son segment: yere girerken merkeze
     const [sx,sy]=S(this.x+(-dy/pl)*off, this.y+(dx/pl)*off);
     ctx.beginPath(); ctx.arc(sx,sy,len*0.8,0,7); ctx.fillStyle="rgba(245,200,70,0.18)"; ctx.fill();
-    drawCar(sx,sy,this.ang,C.yourCar,len*1.14,wid*1.14);
+    drawCar(sx,sy,this.ang,this.color,len*1.14,wid*1.14);
   }
 }
 
@@ -279,7 +281,7 @@ function drawSpots(now){
     if(vocc[s.id]) drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw);
     else if(s.type==="ev_charging"){ ctx.strokeStyle=C.ev;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); bolt(cx,cy,Math.min(sw,sh)*0.32); }
     else if(s.type==="disabled"){ ctx.strokeStyle=C.disabled;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); wheelchair(cx,cy,Math.min(sw,sh)*0.3); }
-    if(s.id===suggestedId){ ctx.strokeStyle=`rgba(245,200,70,${0.5+0.5*pulse})`;ctx.lineWidth=3;rr(x-4,y-4,sw+8,sh+8,5);ctx.stroke(); }
+    if(routes.some(r=>r.spotId===s.id)){ ctx.strokeStyle=`rgba(245,200,70,${0.5+0.5*pulse})`;ctx.lineWidth=3;rr(x-4,y-4,sw+8,sh+8,5);ctx.stroke(); }
   }
 }
 function drawGates(){
@@ -295,10 +297,13 @@ function drawGates(){
     ctx.fillStyle="#fbeede"; ctx.fillText("ÇIKIŞ", x, y - T.scale*1.1); }
 }
 function drawRoute(){
-  if(!route) return;
-  const pts=route.pts.map(p=>S(p[0],p[1]));
-  ctx.strokeStyle="rgba(245,200,70,0.9)"; ctx.lineWidth=3; ctx.lineJoin="round"; ctx.lineCap="round";
-  ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke();
+  for(const r of routes){
+    const pts=r.pts.map(p=>S(p[0],p[1]));
+    const col=(r.car&&r.car.color)||C.suggested;
+    ctx.strokeStyle=col; ctx.globalAlpha=0.85; ctx.lineWidth=3; ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke();
+    ctx.globalAlpha=1;
+  }
 }
 
 // Trafik modeli (yalnızca yumuşak araç-takibi):
@@ -326,10 +331,11 @@ function frame(now){
   const dt=Math.min((now-last)/1000,0.05); last=now;
   if(!L||!T){ requestAnimationFrame(frame); return; }
   const tl=Math.max(T.scale*0.95,8), tw=Math.max(T.scale*0.42,5);   // 0.70x küçültülmüş
-  const moving = (route&&route.car) ? cars.concat([route.car]) : cars;
+  const heroCars = routes.map(r=>r.car).filter(Boolean);
+  const moving = heroCars.length ? cars.concat(heroCars) : cars;
   applyTraffic(moving);                       // hız faktörlerini hesapla (takip + öncelik)
   for(const c of cars) c.update(dt);
-  if(route&&route.car) route.car.update(dt);
+  for(const c of heroCars) c.update(dt);
   if(cars.length) cars = cars.filter(c=>!c.done);
 
   ctx.fillStyle=C.bg; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -345,7 +351,7 @@ function frame(now){
   drawRoute();
   drawGates();
   drawMall();
-  if(route&&route.car) route.car.draw(tl,tw);
+  for(const c of heroCars) c.draw(tl,tw);
   requestAnimationFrame(frame);
 }
 
@@ -400,6 +406,8 @@ bubble("info","Merhaba! Nasıl bir park yeri istediğinizi yazın.");
 bubble("info",'Örn: "Elektrikli arabam var, çıkışa yakın bir yer istiyorum"');
 
 const form=document.getElementById("composer"), input=document.getElementById("msg"), sendBtn=document.getElementById("send");
+const multiBtn=document.getElementById("multi");
+if(multiBtn) multiBtn.addEventListener("click", requestMulti);
 form.addEventListener("submit", async (e)=>{
   e.preventDefault(); const text=input.value.trim(); if(!text)return;
   input.value=""; sendBtn.disabled=true; input.disabled=true;
@@ -410,10 +418,43 @@ form.addEventListener("submit", async (e)=>{
     const r=await fetch("/api/request",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,entrance:entranceId})});
     const data=await r.json(); think.remove();
     bubble("system", data.reply, `kaynak: ${data.source}`);
-    if(data.result&&data.result.path_points){ suggestedId=data.result.spot_id; route={pts:data.result.path_points,car:new Hero(data.result.path_points)}; }
-    else { suggestedId=null; route=null; }
+    if(data.result&&data.result.path_points){ routes=[{pts:data.result.path_points, spotId:data.result.spot_id, car:new Hero(data.result.path_points)}]; }
+    else { routes=[]; }
   }catch(err){ think.remove(); bubble("system","Bağlantı hatası: "+err.message); }
   finally{ sendBtn.disabled=false; input.disabled=false; input.focus(); }
 });
+
+/* ---------- Çoklu araç optimal atama (G2.4 / Hungarian) ---------- */
+// Aynı anda gelen birden çok aracı sunucudaki allocate_multiple ile optimal atar;
+// her araca ayrı renkte rota + animasyon. "İki araç asla aynı yere gitmez."
+const MULTI_DEMO = [
+  {label:"Normal", text:"normal araç",                         vehicle_type:"normal",   entrance:"ENTRANCE-0"},
+  {label:"Elektrikli", text:"elektrikli, şarj lazım",          vehicle_type:"ev", needs_charging:true, entrance:"ENTRANCE-1"},
+  {label:"Engelli", text:"engelli araç",                       vehicle_type:"disabled", entrance:"ENTRANCE-2"},
+];
+async function requestMulti(){
+  multiBtn.disabled=true;
+  bubble("user","🚗🚗🚗 Aynı anda 3 araç geldi (optimal atama)");
+  const think=bubble("system thinking","Optimal atama hesaplanıyor...");
+  try{
+    const r=await fetch("/api/request_multi",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({requests:MULTI_DEMO})});
+    const data=await r.json(); think.remove();
+    routes=[];
+    let lines=[];
+    data.results.forEach((res,i)=>{
+      const col=HERO_COLORS[i%HERO_COLORS.length];
+      if(res && res.path_points){
+        routes.push({pts:res.path_points, spotId:res.spot_id, car:new Hero(res.path_points, col)});
+        lines.push(`${MULTI_DEMO[i].label} → ${res.spot_id} (${res.spot_type}, ${res.distance} br)`);
+      } else {
+        lines.push(`${MULTI_DEMO[i].label} → yer bulunamadı`);
+      }
+    });
+    bubble("system", "Optimal atama (çakışmasız):\n"+lines.join("\n"),
+           `kaynak: Hungarian · toplam ${data.total_distance} br`);
+  }catch(err){ think.remove(); bubble("system","Bağlantı hatası: "+err.message); }
+  finally{ multiBtn.disabled=false; }
+}
 
 (async function(){ await loadLayout(); connectWS(); requestAnimationFrame(frame); })();
