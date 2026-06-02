@@ -24,13 +24,18 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
 
+import time
+
 import config
 from algorithm.graph import build_parking, ENTRANCES
 from algorithm import allocator
-from backend import database, parking_state
+from backend import database, parking_state, anomaly, analytics
 from llm import orchestrator
 from simulator import sensor_simulator
 from backend import mqtt_client
+
+# Aktif rezervasyonlar: spot_id -> son geçerlilik zamanı (sweeper süresi dolanı düşürür)
+_RESERVATIONS = {}
 
 # Statik yerleşim/graf bir kez kurulur (doluluk DB'den canlı gelir)
 _SPOTS, _GRAPH = build_parking()
@@ -96,22 +101,45 @@ def _layout_payload():
 def _state_payload():
     spots = parking_state.get_state()
     occupancy = {s["id"]: s["occupied"] for s in spots}
+    reserved = {s["id"]: s["reserved"] for s in spots if s.get("reserved")}
     occ = sum(1 for v in occupancy.values() if v)
+    res = sum(1 for s in spots if s.get("reserved") and not s["occupied"])
     total = len(spots)
     sim = sensor_simulator.SIM_STATE
+    anom = anomaly.detect()
     return {"occupancy": occupancy,
-            "counts": {"total": total, "occupied": occ, "empty": total - occ},
-            "sim": {"hour": sim["hour"], "busy": sim["busy"]}}
+            "reserved": reserved,
+            "counts": {"total": total, "occupied": occ, "reserved": res,
+                       "empty": total - occ - res},
+            "sim": {"hour": sim["hour"], "busy": sim["busy"]},
+            "sensors": anomaly.health_summary(),
+            "gateway": {"online": mqtt_client.GATEWAY_STATE["online"]},
+            "anomalies": anom["counts"]}
+
+
+def _reservation_sweeper(stop):
+    """Süresi dolan ya da araç gelip park edilen rezervasyonları temizler."""
+    while not stop.is_set():
+        now = time.time()
+        for sid, expire in list(_RESERVATIONS.items()):
+            spot = database.get_spot(sid)
+            if spot is None or spot["occupied"] or not spot["reserved"] or now > expire:
+                # Süre doldu ya da araç park etti (set_occupied reserved'i zaten kaldırır)
+                if spot is not None and spot["reserved"] and not spot["occupied"]:
+                    database.set_reserved(sid, False)
+                _RESERVATIONS.pop(sid, None)
+        stop.wait(2.0)
 
 
 @asynccontextmanager
 async def lifespan(app):
-    # Backend thread'lerini başlat (sensör simülatörü + MQTT abonesi)
+    # Backend thread'lerini başlat (sensör simülatörü + MQTT abonesi + rezervasyon sweeper)
     database.init_db()
     stop = threading.Event()
     threads = [
         threading.Thread(target=mqtt_client.start_subscriber, args=(stop,), daemon=True),
         threading.Thread(target=sensor_simulator.run_simulator, args=(stop,), daemon=True),
+        threading.Thread(target=_reservation_sweeper, args=(stop,), daemon=True),
     ]
     for t in threads:
         t.start()
@@ -154,6 +182,48 @@ def layout():
 @app.get("/api/state")
 def state():
     return _state_payload()
+
+
+@app.get("/api/anomalies")
+def anomalies():
+    """Sensör/durum anomalileri (takılı sensör, çevrimdışı, düşük pil) + filo özeti."""
+    out = anomaly.detect()
+    out["sensors"] = anomaly.health_summary()
+    out["gateway"] = {"online": mqtt_client.GATEWAY_STATE["online"]}
+    return out
+
+
+@app.get("/api/analytics")
+def analytics_endpoint():
+    """Doluluk zaman serisi, ortalama kalış, bölge yoğunluğu, ısı haritası."""
+    return analytics.summary()
+
+
+class ReserveRequest(BaseModel):
+    spot_id: str
+
+
+@app.post("/api/reserve")
+def reserve(req: ReserveRequest):
+    """Bir yeri gelmeden ayırt (rezerve). Dolu/zaten rezerve ise reddedilir."""
+    spot = database.get_spot(req.spot_id)
+    if spot is None:
+        return {"ok": False, "reason": "Yer bulunamadı."}
+    if spot["occupied"]:
+        return {"ok": False, "reason": "Yer dolu, rezerve edilemez."}
+    if spot["reserved"]:
+        return {"ok": False, "reason": "Bu yer zaten rezerve."}
+    database.set_reserved(req.spot_id, True)
+    _RESERVATIONS[req.spot_id] = time.time() + config.RESERVATION_TIMEOUT_SEC
+    return {"ok": True, "spot_id": req.spot_id,
+            "timeout_sec": config.RESERVATION_TIMEOUT_SEC}
+
+
+@app.post("/api/cancel_reservation")
+def cancel_reservation(req: ReserveRequest):
+    database.set_reserved(req.spot_id, False)
+    _RESERVATIONS.pop(req.spot_id, None)
+    return {"ok": True, "spot_id": req.spot_id}
 
 
 @app.post("/api/request")

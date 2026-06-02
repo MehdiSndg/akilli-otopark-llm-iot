@@ -98,15 +98,24 @@ def _tick(state, spot_ids, publish):
 # Sensör sağlığı (telemetri) simülasyonu
 # ---------------------------------------------------------------------------
 def _init_health(spot_ids):
-    """Her sensör için batarya/sinyal durumu. Birkaçı 'zayıf pil' (hızlı tükenir)."""
-    weak = set(random.sample(spot_ids, min(3, len(spot_ids))))   # demo: 3 arızalı aday
+    """Her sensör için batarya/sinyal durumu. Birkaçı 'zayıf pil' (hızlı tükenir).
+
+    Zayıf sensörler düşük pille başlar -> anomali paneli demonun ilk saniyelerinden
+    itibaren gerçek içerikle dolu olur (biri düşük pil, biri yakında çevrimdışı)."""
+    n_weak = min(config.NUM_WEAK_SENSORS, len(spot_ids))
+    weak = set(random.sample(spot_ids, n_weak))
+    # Karışık başlangıç pilleri: biri neredeyse bitik (hızlıca çevrimdışı),
+    # birkaçı düşük-pil bölgesinde (kalıcı uyarı), biri orta.
+    start_batt = [3, 14, 19, 24, 30]
     health = {}
     for sid in spot_ids:
+        is_weak = sid in weak
         health[sid] = {
-            "battery": 100.0,
+            "battery": float(start_batt.pop(0)) if (is_weak and start_batt) else
+                       (round(random.uniform(10, 28), 1) if is_weak else 100.0),
             "rssi": random.randint(-72, -48),
             "online": True,
-            "weak": sid in weak,
+            "weak": is_weak,
         }
     return health
 
@@ -116,7 +125,7 @@ def _step_health(health):
     for sid, h in health.items():
         if not h["online"]:
             continue
-        drain = config.BATTERY_DRAIN_PER_PUBLISH * (12 if h["weak"] else 1)
+        drain = config.WEAK_BATTERY_DRAIN if h["weak"] else config.BATTERY_DRAIN_PER_PUBLISH
         h["battery"] = max(0.0, h["battery"] - drain)
         h["rssi"] = max(-95, min(-40, h["rssi"] + random.randint(-2, 2)))
         if h["battery"] <= 0.0:                  # pil bitti -> sensör çevrimdışı

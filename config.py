@@ -105,13 +105,14 @@ def mqtt_health_topic(spot_id):
 
 
 # Sensör sağlık/telemetri simülasyonu
-HEALTH_PUBLISH_EVERY = 8           # kaç simülatör turunda bir sağlık telemetrisi yayınlanır
-BATTERY_DRAIN_PER_PUBLISH = 0.04   # her telemetride pil düşüşü (% — yavaş tükenir)
+HEALTH_PUBLISH_EVERY = 5           # kaç simülatör turunda bir sağlık telemetrisi yayınlanır
+BATTERY_DRAIN_PER_PUBLISH = 0.05   # sağlıklı sensörlerde pil düşüşü (% — çok yavaş)
+WEAK_BATTERY_DRAIN = 1.5           # "zayıf" sensörlerde tükenme (demo: düşük pil -> çevrimdışı geçişi görünür)
+NUM_WEAK_SENSORS = 5               # demo için bilinçli zayıf/arızalı sensör sayısı
 LOW_BATTERY_THRESHOLD = 20.0       # bu yüzdenin altı "düşük pil" uyarısı
 SENSOR_OFFLINE_AFTER_SEC = 30.0    # bu süre telemetri gelmezse sensör "çevrimdışı" sayılır
 
 # Anomali eşikleri
-STUCK_OCCUPIED_HOURS = 14.0        # bir yer bu kadar simüle saatten uzun dolu kalırsa "takılı/arıza"
 RESERVATION_TIMEOUT_SEC = 90.0     # rezervasyon bu süre içinde dolmazsa otomatik düşer
 
 # Analitik / örnekleme

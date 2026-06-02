@@ -125,7 +125,7 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
     Döner: {spot_id, path, distance, walk_to_exit, cost, spot} ya da None.
     """
     all_spots = parking_state.get_state() if spots is None else spots
-    empty_spots = [s for s in all_spots if not s["occupied"]]
+    empty_spots = [s for s in all_spots if not s["occupied"] and not s.get("reserved")]
 
     candidates = _filter_candidates(empty_spots, vehicle_type, needs_charging)
     if not candidates:
@@ -219,7 +219,7 @@ def allocate_multiple(requests, spots=None):
         return []
 
     all_spots = parking_state.get_state() if spots is None else spots
-    empty = [s for s in all_spots if not s["occupied"]]
+    empty = [s for s in all_spots if not s["occupied"] and not s.get("reserved")]
     if not empty:
         return [None] * n
 
