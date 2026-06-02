@@ -69,6 +69,11 @@ DAY_LENGTH_SEC = 240           # Bir simüle günün gerçek saniye süresi (dem
 # kalış ~8-10 saat. ALPHA=5 -> 8 saatlik araç ~40 birim derinliğe yönelir.
 ALPHA_DISTANCE_PER_HOUR = 5.0
 
+# Yalnızca AÇIKLAMA METNİ için eşik (kararı etkilemez; cevabı "kısa/uzun kalış"
+# diye sözel anlatmak için): <= kısa, >= uzun, arası "dengeli".
+SHORT_STAY_HINT_HOURS = 2
+LONG_STAY_HINT_HOURS = 5
+
 
 # ---------------------------------------------------------------------------
 # MQTT (sensör -> broker -> backend)
@@ -100,6 +105,13 @@ LLM_MODEL = os.getenv("LLM_MODEL", {
     "openai": "gpt-4o",
     "ollama": "llama3.1",
 }.get(LLM_PROVIDER, "gemini-2.5-flash"))
+
+# Açıklama için 2. LLM çağrısı yapılsın mı? (kota optimizasyonu)
+# True  -> her istek 2 LLM çağrısı (param çıkarımı + doğal dil açıklama). Daha akıcı.
+# False -> tek LLM çağrısı (yalnız param çıkarımı) + zengin şablon açıklama. Gemini
+#          ücretsiz kotası (20 istek/gün) demoda 2 KAT daha uzun dayanır.
+# Kotanın çabuk dolduğu demolarda .env'de LLM_EXPLAIN=false önerilir.
+LLM_EXPLAIN = os.getenv("LLM_EXPLAIN", "true").lower() in ("1", "true", "yes", "evet")
 
 # API anahtarları .env'den gelir (koda gömme!)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

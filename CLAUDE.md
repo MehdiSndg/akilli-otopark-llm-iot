@@ -459,6 +459,31 @@ ve LLM korundu; web + pygame ikisi de tutuldu. Asıl değişiklik karar çekirde
       yedeği + nazik not; uygun yer yok→nazik mesaj.
 - [x] G5.4 — README web mimarisi + maliyet fonksiyonuyla güncellendi (ekran görüntüsü kullanıcıda).
 
+**Revizyon v5 — Kapsamlı canlı test + hata düzeltmeleri (tarayıcıda gerçek deneme)**
+Web arayüzü Claude Preview ile gerçek tarayıcıda sürüldü (giriş seç + mesaj gönder),
+JS konsolu/animasyon/araç durumu incelendi. Bulunan ve düzeltilen hatalar:
+- **Trafik kilitlenmesi (KRİTİK):** Olay-araçları (doluluk değişimlerini gösteren)
+  zamanla 40 sınırına dayanıp ~%56'sı `speedFactor=0` ile DONUYORDU (haritada kalıcı
+  yığın). Sebep: `applyTraffic`'teki "kavşakta sert dur (f=0)" kuralı zincirleme
+  deadlock üretiyordu ("en küçük id hep ilerler" garantisi konvoy takibiyle bozuluyordu).
+  Çözüm (app.js): (1) sert kavşak durması kaldırıldı, yalnız aynı-yön yumuşak takip
+  (min hız faktörü 0.15) kaldı → konvoyun önü hep ilerler, deadlock matematiksel olarak
+  imkânsız; (2) her araca güvenlik ömrü (life>16sn → hedefe tamamla); (3) araç sınırı
+  40→16. Doğrulandı: yüksek dolulukta bile donmuş araç 0, sayı ~17, ömür ~9sn.
+- **Fallback açıklaması yanıltıcıydı:** Kota dolunca (hep fallback) cevap her zaman
+  "çıkışa X birim" diyordu; kısa kalış girişe yakın bir yere atanınca bu kafa
+  karıştırıcıydı. Artık SÜRE-FARKINDA: kısa→"girişe yakın, hızlı giriş-çıkış",
+  uzun→"daha içeride, kapı önlerini kısa süreli araçlara bıraktık"; GİRİŞTEN sürüş
+  mesafesini (kararı veren büyüklük) kullanıyor.
+- **Dürüst uyumsuzluk notu:** İstenen engelli/şarjlı yer boş değilse cevap artık
+  "Şu an boş engelli/şarjlı yer kalmadı, size en uygun … yeri ayarladım" diyor.
+- **Kota optimizasyonu (config.LLM_EXPLAIN):** Her istek normalde 2 LLM çağrısı yapar
+  (param çıkarımı + açıklama) → Gemini ücretsiz 20/gün ~10 istekte biter. LLM_EXPLAIN=
+  false yapılınca tek çağrı + zengin şablon açıklama → kota 2 kat dayanır. Varsayılan
+  true (davranış korundu); demoda .env'de false önerilir.
+- NOT: Gemini günlük kotası (20/gün) test sırasında tükendi → LLM yolu kodu doğru ama
+  bugün çoğu istek keyword yedeğine düşüyor (kota ertesi gün sıfırlanır).
+
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
 **Sıradaki:** Faz 6 (sunum içeriği + demo provası). İsteğe bağlı: dokümandaki MySQL

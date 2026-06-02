@@ -1,4 +1,4 @@
-/* Akıllı Otopark — gerçekçi AVM otopark haritası (Canvas).
+﻿/* Akıllı Otopark — gerçekçi AVM otopark haritası (Canvas).
    Backend (FastAPI) yalnızca veri verir; tüm çizim/animasyon/trafik burada. */
 
 const C = {
@@ -108,12 +108,18 @@ class EventCar {
   constructor(pts, onArrive){
     this.pts=pts; this.onArrive=onArrive||null; this._fired=false;
     this.seg=0; this.t=0; this.done=false;
-    this.speed=2.2+Math.random()*0.9; this.ang=0;   // gerçekçi, yavaş otopark hızı
+    this.speed=2.4+Math.random()*0.9; this.ang=0;   // gerçekçi, yavaş otopark hızı
     this.color=rand(CARS); this.off=0.4;   // sağ şerit: kesikli çizginin hemen sağı
     this.px=pts[0][0]; this.py=pts[0][1]; this.id=CARID++; this.speedFactor=1;
+    this.life=0;   // güvenlik ömrü (sn): çok uzun yolda kalan aracı zorla tamamla
+  }
+  _finish(){
+    this.done=true;
+    if(this.onArrive&&!this._fired){ this._fired=true; this.onArrive(); }
   }
   update(dt){
     if(this.done)return;
+    this.life+=dt;
     let rem=this.speed*dt*this.speedFactor;   // araç-takibi: öndekine göre yumuşak yavaşla
     while(rem>0 && this.seg<this.pts.length-1){
       const a=this.pts[this.seg], b=this.pts[this.seg+1];
@@ -124,8 +130,8 @@ class EventCar {
     }
     const pa=this.pts[this.seg], pb=this.pts[Math.min(this.seg+1,this.pts.length-1)];
     this.px=lerp(pa[0],pb[0],this.t); this.py=lerp(pa[1],pb[1],this.t);
-    if(this.seg>=this.pts.length-1){ this.done=true;
-      if(this.onArrive&&!this._fired){ this._fired=true; this.onArrive(); } }
+    // Hedefe vardıysa VEYA güvenlik ömrü dolduysa tamamla -> kalıcı sıkışma/yığılma olmaz
+    if(this.seg>=this.pts.length-1 || this.life>16) this._finish();
   }
   draw(len,wid){
     const a=this.pts[this.seg], b=this.pts[Math.min(this.seg+1,this.pts.length-1)];
@@ -141,7 +147,7 @@ class EventCar {
 }
 function spawnArrival(spotId){
   const sp=spotById[spotId];
-  if(cars.length>40 || !sp || !sp.access || !L.road_nodes[sp.access]){ vocc[spotId]=true; return; }
+  if(cars.length>16 || !sp || !sp.access || !L.road_nodes[sp.access]){ vocc[spotId]=true; return; }
   const path=dijkstra(rand(entranceIds), sp.access);
   if(!path){ vocc[spotId]=true; return; }
   cars.push(new EventCar(path.concat([[sp.x,sp.y]]), ()=>{ vocc[spotId]=true; }));
@@ -149,7 +155,7 @@ function spawnArrival(spotId){
 function spawnDeparture(spotId){
   vocc[spotId]=false;
   const sp=spotById[spotId];
-  if(cars.length>40 || !sp || !sp.access || !L.road_nodes[sp.access]) return;
+  if(cars.length>16 || !sp || !sp.access || !L.road_nodes[sp.access]) return;
   const path=dijkstra(sp.access, rand(vexitIds));
   if(path) cars.push(new EventCar([[sp.x,sp.y]].concat(path), null));
 }
@@ -295,10 +301,11 @@ function drawRoute(){
   ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke();
 }
 
-// Trafik modeli (band-aid değil, sürekli):
-//  - Aynı yöndeki öndeki araç = LİDER -> mesafeye göre yumuşakça yavaşla (araç-takibi).
-//  - Çapraz/karşı araç yolumdaysa = KAVŞAK -> geçiş hakkı küçük id'de; ben dururum.
-// En küçük id'li araç asla çapraz için durmaz -> daima ilerler -> kalıcı kilit imkânsız.
+// Trafik modeli (yalnızca yumuşak araç-takibi):
+//  - Aynı yöndeki öndeki araç = LİDER -> mesafeye göre yumuşakça yavaşla (asla 0'a
+//    inmez; bir konvoyun en önündeki aracın lideri yoktur -> daima ilerler -> konvoy akar).
+//  Not: Eski "kavşakta sert dur (f=0)" kuralı zincirleme KİLİTLENMEYE yol açıyordu;
+//  kaldırıldı. Kavşakta hafif görsel örtüşme kabul edilebilir; donma riski yok.
 function applyTraffic(list){
   const LOOK=1.7, LANE=0.55, MIN=0.85, SAFE=1.7;
   for(const A of list){
@@ -309,8 +316,7 @@ function applyTraffic(list){
       const fwd=dx*ca+dy*sa, lat=-dx*sa+dy*ca;
       if(fwd<=0.02 || fwd>LOOK || Math.abs(lat)>LANE) continue;   // önümde ve şeridimde değil
       const sameDir=(ca*Math.cos(B.ang)+sa*Math.sin(B.ang)) > 0.4;
-      if(sameDir) f=Math.min(f, Math.max(0,(fwd-MIN)/(SAFE-MIN)));  // lideri takip et
-      else if(B.id < A.id) f=0;                                     // kavşak: önceliğe ver
+      if(sameDir) f=Math.min(f, Math.max(0.15,(fwd-MIN)/(SAFE-MIN)));  // lideri yumuşakça takip et (min 0.15)
     }
     A.speedFactor=f;
   }

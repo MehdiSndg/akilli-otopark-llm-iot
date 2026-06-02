@@ -16,6 +16,7 @@ Hata yönetimi (G3.4):
 
 import re
 
+import config
 from algorithm import allocator
 from llm import tools
 from llm.client import get_client, is_quota_error
@@ -93,15 +94,46 @@ def _keyword_fallback(user_text):
 
 
 def _fallback_explanation(result, params):
-    """LLM açıklaması alınamazsa şablon Türkçe cevap (G3.4)."""
+    """LLM açıklaması alınamazsa (ya da LLM_EXPLAIN kapalıysa) şablon Türkçe cevap.
+
+    Maliyet fonksiyonu mantığını sade dille anlatır: kısa kalış girişe yakın,
+    uzun kalış daha içeride. Mesafe olarak GİRİŞTEN sürüş mesafesini kullanır
+    (kararı veren büyüklük budur) — eskiden hep 'çıkışa uzaklık' deniyordu, bu
+    süre-tabanlı yerleştirmede kafa karıştırıcıydı."""
     if result is None:
         return "Üzgünüm, isteğinize uygun boş bir park yeri bulamadım. Otopark dolu olabilir."
     spot = result["spot"]
-    tip = {"normal": "normal", "disabled": "engelli", "ev_charging": "şarjlı"}.get(spot["type"], spot["type"])
-    return (
-        f"Sizi {result['spot_id']} numaralı {tip} park yerine yönlendirdim. "
-        f"Çıkışa yaklaşık {result['walk_to_exit']} birim uzaklıkta."
-    )
+    p = params or {}
+    tip = {"normal": "normal", "disabled": "engelli",
+           "ev_charging": "şarjlı"}.get(spot["type"], spot["type"])
+    dur = p.get("duration_hours")
+    dist = result.get("distance")
+    walk = result.get("walk_to_exit")
+
+    # İstenen özel tip (engelli/şarjlı) o an boş değilse dürüstçe belirt
+    want = None
+    if p.get("vehicle_type") == "disabled":
+        want = "disabled"
+    elif p.get("vehicle_type") == "ev" or p.get("needs_charging"):
+        want = "ev_charging"
+    note = ""
+    if want and spot["type"] != want:
+        wname = "engelli" if want == "disabled" else "şarjlı"
+        note = f"Şu an boş {wname} yer kalmadı, size en uygun {tip} yeri ayarladım. "
+
+    base = f"{note}Sizi {result['spot_id']} numaralı {tip} park yerine yönlendirdim"
+    if dur:
+        if dur <= config.SHORT_STAY_HINT_HOURS:
+            return (f"{base}. Kısa süre (~{dur} saat) kalacağınız için girişe yakın "
+                    f"bir yer seçtim; hızlı giriş-çıkış için ideal "
+                    f"(girişten ~{dist} birim).")
+        if dur >= config.LONG_STAY_HINT_HOURS:
+            return (f"{base}. Uzun süre (~{dur} saat) kalacağınız için biraz daha "
+                    f"içeride bir yer seçtim; kapı önlerini kısa süreli araçlara "
+                    f"bıraktık (girişten ~{dist} birim).")
+        return (f"{base}. ~{dur} saatlik kalışınıza göre dengeli bir konum seçtim "
+                f"(girişten ~{dist} birim).")
+    return (f"{base}. Girişten yaklaşık {dist} birim, çıkışa {walk} birim uzaklıkta.")
 
 
 def handle_request(user_text, spots=None, client=None, entrance=None):
@@ -146,9 +178,11 @@ def handle_request(user_text, spots=None, client=None, entrance=None):
     # 2) Kararı algoritma verir (deterministik)
     result = allocator.find_best_parking_spot(spots=spots, entrance=entrance, **params)
 
-    # 3) Sonucu doğal dille açıkla. LLM zaten başarısızsa (ör. kota) ikinci çağrıyı
-    #    boşuna deneyip kotayı yakma/bekleme — doğrudan şablon cevaba düş.
-    if llm_failed:
+    # 3) Sonucu doğal dille açıkla.
+    #    - LLM zaten başarısızsa (ör. kota) ikinci çağrıyı boşuna deneme.
+    #    - config.LLM_EXPLAIN kapalıysa kasıtlı olarak tek çağrı modundayız
+    #      (kota tasarrufu): zengin şablon açıklamayı kullan.
+    if llm_failed or not config.LLM_EXPLAIN:
         reply = _fallback_explanation(result, params)
         if quota_hit:
             reply = "(LLM günlük kotası doldu, basit modda yanıtlıyorum.) " + reply
