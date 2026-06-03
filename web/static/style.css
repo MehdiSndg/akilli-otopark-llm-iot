@@ -14,6 +14,10 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* hidden attribute her zaman kazanmalı: .overlay/.pill/.anomaly-list gibi display:flex
+   kuralları yoksa hidden'ı ezer (kaplama/rozet/liste gizlenemez, hep açık kalır). */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   background: var(--bg);
