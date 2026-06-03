@@ -16,6 +16,11 @@ parking.db*
 
 # Önizleme / geçici görüntüler
 preview.png
+_shot_*.png
+
+# Çalışma zamanı logları / geçici test dosyaları
+*.log
+_manualcheck.py
 
 # IDE / OS
 .vscode/
