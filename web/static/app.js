@@ -387,24 +387,28 @@ async function loadLayout(){
   resize();
   buildLegend(); buildEntranceSel();
 }
+function applyState(d, animate){
+  stTotal.textContent=d.counts.total; stOcc.textContent=d.counts.occupied; stEmp.textContent=d.counts.empty;
+  if(d.sim && clockEl){ const h=Math.floor(d.sim.hour), m=Math.floor((d.sim.hour-h)*60);
+    clockEl.textContent=`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}  ·  Yoğunluk: ${d.sim.busy}`; }
+  reservedMap = d.reserved || {};
+  updateSysRow(d);
+  if(!animate || prevOcc===null){ vocc={...d.occupancy}; prevOcc=d.occupancy; return; }  // baz kare: animasyonsuz
+  for(const id in d.occupancy){
+    const now=d.occupancy[id], was=prevOcc[id];
+    if(now && !was) spawnArrival(id);        // yeni doldu -> araç gelir
+    else if(!now && was) spawnDeparture(id); // boşaldı -> araç gider
+  }
+  prevOcc=d.occupancy;
+}
+// Açılışta anlık durumu bir kez çek -> sayılar/doluluk hemen boyanır (ilk WS'i bekleme)
+async function primeState(){
+  try{ applyState(await (await fetch("/api/state")).json(), false); }catch(e){}
+}
 function connectWS(){
   const proto=location.protocol==="https:"?"wss":"ws";
   const ws=new WebSocket(`${proto}://${location.host}/ws`);
-  ws.onmessage=(ev)=>{
-    const d=JSON.parse(ev.data);
-    stTotal.textContent=d.counts.total; stOcc.textContent=d.counts.occupied; stEmp.textContent=d.counts.empty;
-    if(d.sim && clockEl){ const h=Math.floor(d.sim.hour), m=Math.floor((d.sim.hour-h)*60);
-      clockEl.textContent=`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}  ·  Yoğunluk: ${d.sim.busy}`; }
-    reservedMap = d.reserved || {};
-    updateSysRow(d);
-    if(prevOcc===null){ vocc={...d.occupancy}; prevOcc=d.occupancy; return; }  // ilk kare: animasyonsuz
-    for(const id in d.occupancy){
-      const now=d.occupancy[id], was=prevOcc[id];
-      if(now && !was) spawnArrival(id);        // yeni doldu -> araç gelir
-      else if(!now && was) spawnDeparture(id); // boşaldı -> araç gider
-    }
-    prevOcc=d.occupancy;
-  };
+  ws.onmessage=(ev)=>applyState(JSON.parse(ev.data), true);
   ws.onclose=()=>setTimeout(connectWS,1500);
 }
 function buildLegend(){
@@ -613,4 +617,4 @@ async function requestMulti(){
   finally{ multiBtn.disabled=false; }
 }
 
-(async function(){ await loadLayout(); connectWS(); requestAnimationFrame(frame); })();
+(async function(){ await loadLayout(); await primeState(); connectWS(); requestAnimationFrame(frame); })();
