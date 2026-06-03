@@ -122,8 +122,33 @@ def _keyword_fallback(user_text):
 # ---------------------------------------------------------------------------
 # Açıklama (find aracı için)
 # ---------------------------------------------------------------------------
+def _type_mismatch_note(result, params):
+    """İstenen özel tip (engelli/şarjlı) o an boş değilse dürüst uyarı notu (yoksa '')."""
+    if result is None:
+        return ""
+    p = params or {}
+    spot = result["spot"]
+    want = None
+    if p.get("vehicle_type") == "disabled":
+        want = "disabled"
+    elif p.get("vehicle_type") == "ev" or p.get("needs_charging"):
+        want = "ev_charging"
+    if want and spot["type"] != want:
+        wname = "engelli" if want == "disabled" else "şarjlı"
+        tip = {"normal": "normal", "disabled": "engelli",
+               "ev_charging": "şarjlı"}.get(spot["type"], spot["type"])
+        return f"Şu an boş {wname} yer kalmadı, size en uygun {tip} yeri ayarladım. "
+    return ""
+
+
 def _fallback_explanation(result, params):
-    """LLM açıklaması alınamazsa (ya da LLM_EXPLAIN kapalıysa) şablon Türkçe cevap."""
+    """LLM açıklaması alınamazsa (ya da LLM_EXPLAIN kapalıysa) şablon Türkçe cevap.
+
+    Kapı ayrımı (AVM kapısı ile otopark çıkışı KARIŞTIRILMAZ):
+      - "girişe yakın"  -> otopark GİRİŞ kapısından sürüş mesafesi
+      - "çıkışa yakın"  -> otopark araç ÇIKIŞINA (VEXIT) sürüş mesafesi
+      - varsayılan       -> girişten sürüş + AVM yaya kapısına yürüme (ayrı belirtilir)
+    """
     if result is None:
         return "Üzgünüm, isteğinize uygun boş bir park yeri bulamadım. Otopark dolu olabilir."
     spot = result["spot"]
@@ -131,21 +156,12 @@ def _fallback_explanation(result, params):
     tip = {"normal": "normal", "disabled": "engelli",
            "ev_charging": "şarjlı"}.get(spot["type"], spot["type"])
     dur = p.get("duration_hours")
+    pref = p.get("preference")
     dist = result.get("distance")
-    walk = result.get("walk_to_exit")
+    exit_d = result.get("dist_to_exit")
+    walk = result.get("walk_to_mall", result.get("walk_to_exit"))
 
-    # İstenen özel tip (engelli/şarjlı) o an boş değilse dürüstçe belirt
-    want = None
-    if p.get("vehicle_type") == "disabled":
-        want = "disabled"
-    elif p.get("vehicle_type") == "ev" or p.get("needs_charging"):
-        want = "ev_charging"
-    note = ""
-    if want and spot["type"] != want:
-        wname = "engelli" if want == "disabled" else "şarjlı"
-        note = f"Şu an boş {wname} yer kalmadı, size en uygun {tip} yeri ayarladım. "
-
-    base = f"{note}Sizi {result['spot_id']} numaralı {tip} park yerine yönlendirdim"
+    base = f"Sizi {result['spot_id']} numaralı {tip} park yerine yönlendirdim"
     if dur:
         if dur <= config.SHORT_STAY_HINT_HOURS:
             return (f"{base}. Kısa süre (~{dur} saat) kalacağınız için girişe yakın "
@@ -157,7 +173,13 @@ def _fallback_explanation(result, params):
                     f"bıraktık (girişten ~{dist} birim).")
         return (f"{base}. ~{dur} saatlik kalışınıza göre dengeli bir konum seçtim "
                 f"(girişten ~{dist} birim).")
-    return (f"{base}. Girişten yaklaşık {dist} birim, çıkışa {walk} birim uzaklıkta.")
+    if pref == "nearest_exit":
+        return (f"{base}. Otopark çıkışına (ÇIKIŞ) yaklaşık {exit_d} birim "
+                f"uzaklıkta — kolay çıkış için ideal.")
+    if pref == "nearest_entrance":
+        return f"{base}. Otopark giriş kapısına yaklaşık {dist} birim uzaklıkta."
+    return (f"{base}. Girişten yaklaşık {dist} birim; AVM yaya kapısına "
+            f"yaklaşık {walk} birim yürüme.")
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +211,12 @@ def _handle_find(user_text, args, spots, entrance, client, source, llm_failed, q
         except Exception as e:
             logger.warning("açıklama alınamadı, şablona düşülüyor: %s", e)
             reply = _fallback_explanation(result, params)
+
+    # İstenen tip (engelli/şarjlı) boş değilse: LLM modunda da DAİMA dürüstçe belirt
+    # (aksi halde sürücü EV istemişken sessizce normal yere gönderiliyor sanıyor).
+    note = _type_mismatch_note(result, params)
+    if note and note.strip() not in reply:
+        reply = note + reply
 
     # Karar/oturum logu (yalnız gerçek istekte; testte spots enjekte edilir, atla)
     if spots is None:

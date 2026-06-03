@@ -152,3 +152,14 @@ def test_entrance_passed_through_to_allocator():
                                       entrance=ENTRANCES[1])
     assert out["result"]["spot_id"] == "E-24"
     assert out["result"]["path"][0] == ENTRANCES[1]
+
+
+def test_ev_request_notes_when_no_charging_spot_free():
+    # REGRESYON (bug #1): boş şarjlı yer yokken EV istenirse, LLM modunda dahi cevap
+    # dürüstçe "boş şarjlı yer kalmadı" demeli ve normal yer vermeli (sessizce değil).
+    spots = _spots_with_free({"C-12"})   # yalnız normal C-12 boş; tüm EV/engelli dolu
+    client = FakeClient(args={"vehicle_type": "ev", "preference": "any",
+                              "needs_charging": True})
+    out = orchestrator.handle_request("elektrikli arabam var", spots=spots, client=client)
+    assert out["result"]["spot"]["type"] == "normal"      # EV yok -> normal verildi
+    assert "şarjlı yer kalmadı" in out["reply"].lower()   # ama dürüstçe belirtildi

@@ -549,6 +549,26 @@ seçildi. Hepsi pytest (37 geçer) + canlı API ile uçtan uca doğrulandı.
       on_disconnect + ilk bağlantı retry döngüsü (graceful degradation); simülatör
       client'ına da reconnect_delay_set.
 
+**Revizyon v6 — Kapı anlamı (AVM↔otopark çıkışı) + EV uyumsuzluk + LLM açıklama (kullanıcı hata bildirimi)**
+Kullanıcı tarayıcıda 2 hata bildirdi; tüm sistem web'de yeniden test edildi.
+- **Bug: "çıkışa yakın" yanlış kapıyı hedefliyordu.** allocator'da `nearest_exit`
+  AVM yaya kapısına (EXITS=MALL) göre hesaplanıyordu; oysa UI'da turuncu "ÇIKIŞ"
+  araç çıkışıdır (VEHICLE_EXITS=VEXIT). Düzeltildi: `nearest_exit` artık en yakın
+  ARAÇ ÇIKIŞINA (VEXIT) sürüş mesafesini minimize ediyor. Sonuç alanlarına
+  `dist_to_exit` (araç çıkışına) ve `walk_to_mall` (AVM kapısına yürüme) eklendi;
+  `walk_to_exit` geriye dönük = AVM yürümesi (DB sütunu korundu).
+- **Bug: EV isteyince normal yer veriyordu (sessizce).** Boş şarjlı/engelli yer
+  yoksa cevap artık LLM modunda da DAİMA "Şu an boş şarjlı/engelli yer kalmadı,
+  size en uygun … yeri ayarladım" notuyla başlıyor (_type_mismatch_note _handle_find'de).
+- **LLM açıklaması kapıları karıştırıp yanlış mesafe uyduruyordu** (girişe yakın yeri
+  "AVM kapısına yakın" diye anlatıyordu). _build_explain_prompt tercihe göre TEK doğru
+  "manşet mesafe" verip uydurmayı yasaklayacak şekilde sıkılaştırıldı; artık doğru.
+- Fallback/şablon açıklama da kapı-ayrımlı: girişe→giriş kapısı, çıkışa→araç çıkışı,
+  varsayılan→giriş + AVM yürümesi ayrı belirtiliyor.
+- Tüm web özellikleri tarayıcıda test edildi (çalışıyor): çoklu araç (Hungarian),
+  tahmin, analitik paneli, ısı haritası, anomali rozeti+harita işareti, canlı sayılar.
+- Testler **37→38** (EV uyumsuzluk notu regresyonu; nearest_exit=VEXIT testleri güncel).
+
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
 **Sıradaki:** Faz 6 (sunum içeriği + demo provası) — artık IoT/AIoT katmanı çok

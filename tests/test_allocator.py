@@ -54,14 +54,15 @@ def test_no_free_spot_returns_none():
 
 
 def test_preference_changes_choice():
-    # Biri girişe yakın (E-25, alt bant), biri çıkışa yakın (A-20, üst bant) iki boş yer
-    spots = _spots_with_free({"E-25", "A-20"})
+    # E-25 otopark GİRİŞİNE yakın (driveE0~6.6), E-13 araç ÇIKIŞINA (VEXIT) yakın
+    # (toVEXIT~12.1). nearest_exit artık AVM kapısını DEĞİL araç çıkışını hedefler.
+    spots = _spots_with_free({"E-25", "E-13"})
     near_entrance = allocator.find_best_parking_spot("normal", "nearest_entrance", False, spots=spots)
     near_exit = allocator.find_best_parking_spot("normal", "nearest_exit", False, spots=spots)
     # Tercih değişince seçilen yer de değişmeli
     assert near_entrance["spot_id"] != near_exit["spot_id"]
-    assert near_entrance["spot_id"] == "E-25"   # giriş sol-altta
-    assert near_exit["spot_id"] == "A-20"       # çıkış üst-ortada
+    assert near_entrance["spot_id"] == "E-25"   # otopark girişine en yakın
+    assert near_exit["spot_id"] == "E-13"       # araç çıkışına (VEXIT) en yakın
 
 
 def test_entrance_changes_choice():
@@ -124,16 +125,16 @@ def test_cost_field_is_distance_to_ideal():
 
 
 def test_explicit_preference_overrides_duration():
-    # REGRESYON: "çıkışa yakın" derken süre verilse bile çıkışa yakın yer gelmeli
-    # (maliyet fonksiyonu açık yön tercihini EZMEMELİ). E-1 kapıya yakın ama çıkışa
-    # uzak; A-20 çıkışa yakın. Kısa süre + çıkışa yakın -> yine A-20 seçilmeli.
-    spots = _spots_with_free({"E-1", "A-20"})
+    # REGRESYON: açık yön tercihi verilince süre maliyet fonksiyonunu EZMEMELİ.
+    # E-25 girişe yakın (çıkışa uzak), E-13 araç çıkışına yakın (girişe görece uzak).
+    spots = _spots_with_free({"E-25", "E-13"})
+    # Çıkışa yakın + kısa süre -> yine çıkışa yakın (E-13) gelmeli
     near_exit = allocator.find_best_parking_spot("normal", "nearest_exit",
                                                  duration_hours=1, spots=spots,
                                                  entrance=ENTRANCES[0])
-    assert near_exit["spot_id"] == "A-20"        # çıkışa yakın (süre ezmedi)
+    assert near_exit["spot_id"] == "E-13"        # araç çıkışına yakın (süre ezmedi)
     # Girişe yakın + uzun süre de tercihi korumalı
     near_entrance = allocator.find_best_parking_spot("normal", "nearest_entrance",
                                                      duration_hours=8, spots=spots,
                                                      entrance=ENTRANCES[0])
-    assert near_entrance["spot_id"] == "E-1"     # girişe yakın (süre ezmedi)
+    assert near_entrance["spot_id"] == "E-25"    # girişe yakın (süre ezmedi)

@@ -68,24 +68,36 @@ def _build_explain_prompt(user_text, result, params):
             "Sürücüye Türkçe, kısa ve nazik bir şekilde uygun yer bulunamadığını açıkla."
         )
     spot = result["spot"]
-    dur = (params or {}).get("duration_hours")
-    if dur:
-        dur_line = (
-            f"- Tahmini kalış süresi: {dur} saat\n"
-            f"- Yer, kalış süresine göre maliyet fonksiyonuyla seçildi: kısa kalanlar "
-            f"kapıya yakın, uzun kalanlar daha derine yönlendirilir (sirkülasyon).\n"
-        )
+    p = params or {}
+    dur = p.get("duration_hours")
+    pref = p.get("preference")
+    exit_d = result.get("dist_to_exit")
+    walk = result.get("walk_to_mall", result.get("walk_to_exit"))
+    dist = result.get("distance")
+
+    # Tercihe göre TEK ve doğru "manşet mesafe" — LLM'in yanlış kapı iddia etmesini önler
+    if pref == "nearest_exit":
+        headline = (f"Sürücü ÇIKIŞA yakın istedi. Bu yer otopark araç çıkışına "
+                    f"(ÇIKIŞ kapısı) {exit_d} birim. SADECE bunu vurgula.")
+    elif pref == "nearest_entrance":
+        headline = (f"Sürücü GİRİŞE yakın istedi. Bu yer otopark giriş kapısına "
+                    f"{dist} birim. SADECE bunu vurgula. (AVM/çıkış DEME.)")
+    elif dur:
+        headline = (f"Kalış süresi {dur} saat. Yer maliyet fonksiyonuyla seçildi: kısa "
+                    f"kalan kapıya yakın, uzun kalan derine. Girişten {dist} birim.")
     else:
-        dur_line = ""
+        headline = (f"Belirgin tercih yok. Girişten {dist} birim; AVM yaya kapısına "
+                    f"{walk} birim yürüme.")
+
     return (
         f"Sürücü şöyle dedi: \"{user_text}\".\n"
-        f"Yönlendirme algoritması şu yeri seçti:\n"
-        f"- Park yeri: {result['spot_id']} (tip: {spot['type']}, bölge: {spot['zone']})\n"
-        f"- Girişten sürüş mesafesi: {result['distance']} birim\n"
-        f"- Park yerinden çıkışa yürüme: {result['walk_to_exit']} birim\n"
-        f"{dur_line}"
-        "Bu sonucu sürücüye Türkçe, tek-iki cümlede, sıcak bir dille açıkla. "
-        "Park yeri kimliğini ve çıkışa/girişe yakınlığı mutlaka belirt."
+        f"Seçilen yer: {result['spot_id']} (tip: {spot['type']}).\n"
+        f"{headline}\n\n"
+        "KURALLAR:\n"
+        "- 'Otopark çıkışı' (araçla ayrılınan ÇIKIŞ kapısı) ile 'AVM kapısı' "
+        "(yürüyerek mağazaya girilen kapı) AYRI şeylerdir; ASLA karıştırma.\n"
+        "- Yalnızca yukarıda VERİLEN mesafeyi kullan; başka yakınlık/mesafe UYDURMA.\n"
+        "- Türkçe, tek-iki cümle, sıcak ama abartısız. Park yeri kimliğini belirt."
     )
 
 
