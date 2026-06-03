@@ -163,3 +163,23 @@ def test_ev_request_notes_when_no_charging_spot_free():
     out = orchestrator.handle_request("elektrikli arabam var", spots=spots, client=client)
     assert out["result"]["spot"]["type"] == "normal"      # EV yok -> normal verildi
     assert "şarjlı yer kalmadı" in out["reply"].lower()   # ama dürüstçe belirtildi
+
+
+def test_direct_spot_request_keyword():
+    # "D-34'e yerleştir" -> metinden D-34 çıkarılıp (LLM yokken) oraya yerleşmeli
+    spots = _spots_with_free({"D-34", "E-27"})
+    client = FakeClient(args=None)                        # keyword yedeği
+    out = orchestrator.handle_request("beni D-34 e yerleştir", spots=spots, client=client)
+    assert out["result"]["spot_id"] == "D-34"
+    assert out["result"]["requested_status"] == "ok"
+    assert "D-34" in out["reply"]
+
+
+def test_direct_spot_request_llm_arg():
+    # LLM spot_id="A-7" döndürürse o yer (boşsa) verilmeli
+    spots = _spots_with_free({"A-7", "E-27"})
+    client = FakeClient(args={"vehicle_type": "normal", "preference": "any",
+                              "needs_charging": False, "spot_id": "A-7"})
+    out = orchestrator.handle_request("A-7 olsun", spots=spots, client=client)
+    assert out["result"]["spot_id"] == "A-7"
+    assert out["result"]["requested_status"] == "ok"

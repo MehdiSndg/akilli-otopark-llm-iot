@@ -48,6 +48,12 @@ TOOL_FIND = {
                            "kalacağını söylerse (ör. \"2 saat\", \"yarım gün\") bunu "
                            "saate çevir; söylemezse bu parametreyi boş bırak.",
         },
+        "spot_id": {
+            "type": "string",
+            "description": "Sürücü BELİRLİ bir park yeri numarası söylerse (ör. "
+                           "\"D-34'e koy\", \"A-7 olsun\", \"C12 istiyorum\") o yer "
+                           "kimliğini buraya yaz (ör. \"D-34\"). Söylemezse boş bırak.",
+        },
     },
     "required": ["vehicle_type", "preference", "needs_charging"],
 }
@@ -105,6 +111,8 @@ SYSTEM_PROMPT = (
     "şarj false. Elektrikli/şarj ima ediliyorsa vehicle_type=ev ve "
     "needs_charging=true yap. Kalış süresi belirtilirse (ör. \"2 saat\", \"bütün "
     "gün\") duration_hours'ı saate çevir; belirtilmezse boş bırak. "
+    "Sürücü BELİRLİ bir park yeri söylerse (ör. \"D-34'e koy\", \"A-7 olsun\") "
+    "spot_id'yi o yerin kimliğiyle doldur (ör. \"D-34\"). "
     "Tercih yalnızca yakınlık ifade eder; sürücü bir noktadan UZAK olmak isterse "
     "diğerine yakını seç: \"çıkışa uzak\" -> nearest_entrance, \"girişe uzak\" -> "
     "nearest_exit. Türkçe ya da İngilizce — sürücü hangi dilde yazarsa o dilde anla."

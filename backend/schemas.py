@@ -12,6 +12,7 @@ girmeden yakalanır":
 Aynı Pydantic, FastAPI istek gövdelerini de doğrular (server.py'deki modeller).
 """
 
+import re
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -70,6 +71,18 @@ class ParkingParams(BaseModel):
     preference: str = "any"
     needs_charging: bool = False
     duration_hours: Optional[int] = None
+    requested_spot_id: Optional[str] = None     # sürücü belirli bir yer istediyse (ör. "D-34")
+
+    @field_validator("requested_spot_id", mode="before")
+    @classmethod
+    def _spot(cls, v):
+        """\"d34\", \"D 34\", \"D-34\" -> \"D-34\"; geçersizse None (bant A-E, no 1-48)."""
+        if not v:
+            return None
+        m = re.search(r"([A-Ea-e])\s*-?\s*(\d{1,2})", str(v))
+        if not m:
+            return None
+        return f"{m.group(1).upper()}-{int(m.group(2))}"
 
     @field_validator("vehicle_type")
     @classmethod
@@ -103,6 +116,9 @@ class ParkingParams(BaseModel):
 def parse_params(args):
     """Ham LLM argümanlarını doğrulanmış parametre dict'ine çevir (her zaman geçerli)."""
     data = dict(args or {})
+    # Araç şeması "spot_id" der; iç parametre adımız requested_spot_id
+    if "spot_id" in data and "requested_spot_id" not in data:
+        data["requested_spot_id"] = data.pop("spot_id")
     data.setdefault("vehicle_type", "normal")
     data.setdefault("preference", "any")
     data.setdefault("needs_charging", False)

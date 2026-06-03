@@ -115,6 +115,11 @@ def _keyword_fallback(user_text):
     elif mentions_entrance:
         args["preference"] = "nearest_exit" if far else "nearest_entrance"
 
+    # Belirli park yeri kimliği (ör. "D-34", "a7", "C 12")
+    m = re.search(r"\b([A-Ea-e])\s*-?\s*(\d{1,2})\b", user_text)
+    if m:
+        args["spot_id"] = f"{m.group(1).upper()}-{int(m.group(2))}"
+
     args["duration_hours"] = _extract_duration(user_text)
     return _normalize_args(args)
 
@@ -161,6 +166,18 @@ def _fallback_explanation(result, params):
     exit_d = result.get("dist_to_exit")
     walk = result.get("walk_to_mall", result.get("walk_to_exit"))
 
+    # Sürücü belirli bir yer istediyse (ör. "D-34"): durumu açıkça bildir
+    rstat = result.get("requested_status")
+    rid = result.get("requested_spot_id")
+    if rstat == "ok":
+        return (f"İstediğiniz {rid} numaralı {tip} park yerine yönlendirdim. "
+                f"Otopark girişinden yaklaşık {dist} birim uzaklıkta.")
+    if rstat in ("taken", "invalid"):
+        pre = (f"{rid} numaralı yer şu an dolu" if rstat == "taken"
+               else f"{rid} diye bir yer bulamadım")
+        return (f"{pre}; size en uygun {result['spot_id']} numaralı {tip} yeri "
+                f"ayarladım. Otopark girişinden yaklaşık {dist} birim uzaklıkta.")
+
     base = f"Sizi {result['spot_id']} numaralı {tip} park yerine yönlendirdim"
     if dur:
         if dur <= config.SHORT_STAY_HINT_HOURS:
@@ -198,8 +215,12 @@ def _handle_find(user_text, args, spots, entrance, client, source, llm_failed, q
     # Kararı algoritma verir (deterministik)
     result = allocator.find_best_parking_spot(spots=spots, entrance=entrance, **params)
 
-    # Açıklama: LLM başarısızsa/kapalıysa şablon; değilse LLM
-    if llm_failed or not config.LLM_EXPLAIN:
+    # Belirli yer istendiyse (D-34 vb.) açıklama DETERMİNİSTİK olmalı -> şablon kullan
+    # (LLM "ok/dolu/yok" durumunu yanlış anlatabilir).
+    requested = bool(result and result.get("requested_status"))
+
+    # Açıklama: LLM başarısızsa/kapalıysa ya da belirli yer istendiyse şablon; değilse LLM
+    if llm_failed or not config.LLM_EXPLAIN or requested:
         reply = _fallback_explanation(result, params)
         if quota_hit:
             reply = "(LLM günlük kotası doldu, basit modda yanıtlıyorum.) " + reply
@@ -214,9 +235,11 @@ def _handle_find(user_text, args, spots, entrance, client, source, llm_failed, q
 
     # İstenen tip (engelli/şarjlı) boş değilse: LLM modunda da DAİMA dürüstçe belirt
     # (aksi halde sürücü EV istemişken sessizce normal yere gönderiliyor sanıyor).
-    note = _type_mismatch_note(result, params)
-    if note and note.strip() not in reply:
-        reply = note + reply
+    # Belirli yer açıkça seçildiyse (requested ok) tip-uyumsuzluk notu eklenmez.
+    if not (result and result.get("requested_status") == "ok"):
+        note = _type_mismatch_note(result, params)
+        if note and note.strip() not in reply:
+            reply = note + reply
 
     # Karar/oturum logu (yalnız gerçek istekte; testte spots enjekte edilir, atla)
     if spots is None:

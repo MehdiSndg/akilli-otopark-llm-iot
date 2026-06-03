@@ -569,6 +569,18 @@ Kullanıcı tarayıcıda 2 hata bildirdi; tüm sistem web'de yeniden test edildi
   tahmin, analitik paneli, ısı haritası, anomali rozeti+harita işareti, canlı sayılar.
 - Testler **37→38** (EV uyumsuzluk notu regresyonu; nearest_exit=VEXIT testleri güncel).
 
+**Revizyon v7 — Doğrudan yer seçimi (kullanıcı isteği): "beni D-34'e yerleştir"**
+Sürücü artık BELİRLİ bir park yeri isteyebiliyor (önceden yok sayılıyordu).
+- tools.py find aracına `spot_id` parametresi + sistem prompt ipucu; schemas.py
+  `requested_spot_id` alanı (regex normalize: "d34"/"D 34"/"D-34" -> "D-34", bant A-E).
+- orchestrator keyword yedeği metinden yer kimliğini regex'le çıkarır (\b[A-E]-?\d{1,2}\b).
+- allocator.find_best_parking_spot(requested_spot_id=...): yer BOŞSA doğrudan oraya
+  (requested_status="ok"); DOLUYSA "taken", YOKSA "invalid" işaretiyle en uygun
+  alternatife düşer. Belirli yer istendiğinde açıklama DETERMİNİSTİK (şablon) verilir:
+  ok-> "İstediğiniz D-34'e yönlendirdim"; taken-> "D-34 dolu, size E-X'i ayarladım";
+  invalid-> "D-34 diye yer bulamadım, ...". Tarayıcıda canlı doğrulandı (boş/dolu).
+- Testler **38→43** (boş/dolu/geçersiz + keyword + LLM-arg yolları).
+
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
 **Sıradaki:** Faz 6 (sunum içeriği + demo provası) — artık IoT/AIoT katmanı çok

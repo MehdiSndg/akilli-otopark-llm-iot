@@ -119,26 +119,65 @@ def _filter_candidates(empty_spots, vehicle_type, needs_charging):
     return candidates
 
 
+def _result_for(spot, entrance, cost=0.0, extra=None):
+    """Verilen park yeri için sonuç sözlüğü (mesafeleri hesaplar)."""
+    node = spot["node_id"]
+    drive_path, drive = _best_drive(node, entrance)
+    walk = _best_walk_to_mall(node)
+    res = {
+        "spot_id": spot["id"],
+        "path": drive_path,
+        "distance": round(drive, 2),
+        "dist_to_exit": round(_best_exit(node), 2),
+        "walk_to_exit": round(walk, 2),
+        "walk_to_mall": round(walk, 2),
+        "cost": round(cost, 2),
+        "spot": spot,
+    }
+    if extra:
+        res.update(extra)
+    return res
+
+
 def find_best_parking_spot(vehicle_type="normal", preference="any",
                            needs_charging=False, duration_hours=None,
-                           entrance=None, spots=None):
+                           entrance=None, requested_spot_id=None, spots=None):
     """
     Sürücü isteğine en uygun boş park yerini bulur.
 
-    entrance      : sürücünün girdiği kapı düğümü (None = en yakın giriş).
-    duration_hours: tahmini kalış süresi (saat). Verilirse karar MALİYET
-                    FONKSİYONU ile verilir: C_i = |d_i - ALPHA*t| (en küçük seçilir).
+    entrance         : sürücünün girdiği kapı düğümü (None = en yakın giriş).
+    requested_spot_id: sürücü BELİRLİ bir yer istediyse (ör. "D-34"). Boşsa o yere
+                       doğrudan yerleştirilir; dolu/yoksa normal akışa düşülür ve
+                       sonuca requested_status ("ok"|"taken"|"invalid") yazılır.
+    duration_hours   : tahmini kalış süresi (saat). Verilirse karar MALİYET
+                       FONKSİYONU ile verilir: C_i = |d_i - ALPHA*t|.
 
     Skor (küçük = iyi, _spot_cost):
       - Açık yön tercihi (girişe/çıkışa yakın) BİRİNCİL: o mesafe minimize edilir
-        (çıkışa yakın -> çıkışa yürüme; girişe yakın -> girişten sürüş). Süre
+        (çıkışa yakın -> araç çıkışına sürüş; girişe yakın -> girişten sürüş). Süre
         verilse bile tercih ezilmez.
       - Tercih "farketmez" + süre verilmişse: maliyet = |sürüş - ALPHA*süre|
         (kısa kalan kapıya yakın, uzun kalan derine — sirkülasyon).
       - Hiçbiri yoksa: girişten en kısa sürüş.
-    Döner: {spot_id, path, distance, walk_to_exit, cost, spot} ya da None.
+    Döner: {spot_id, path, distance, dist_to_exit, walk_to_exit, cost, spot, ...}
+    ya da None.
     """
     all_spots = parking_state.get_state() if spots is None else spots
+
+    # Sürücü belirli bir yer istediyse (ör. "D-34"): boşsa doğrudan oraya koy.
+    req_status = None
+    rid = None
+    if requested_spot_id:
+        rid = str(requested_spot_id).strip().upper()
+        match = next((s for s in all_spots if s["id"].upper() == rid), None)
+        if match is None:
+            req_status = "invalid"                         # böyle bir yer yok
+        elif match["occupied"] or match.get("reserved"):
+            req_status = "taken"                           # var ama dolu/rezerve
+        else:
+            return _result_for(match, entrance, cost=0.0,
+                               extra={"requested_spot_id": rid, "requested_status": "ok"})
+
     empty_spots = [s for s in all_spots if not s["occupied"] and not s.get("reserved")]
 
     candidates = _filter_candidates(empty_spots, vehicle_type, needs_charging)
@@ -169,6 +208,11 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
                 "cost": round(cost, 2),
                 "spot": s,
             }
+
+    # İstenen belirli yer doluysa/yoksa: alternatife düştük; bunu sonuca işaretle.
+    if best is not None and req_status:
+        best["requested_spot_id"] = rid
+        best["requested_status"] = req_status         # "taken" | "invalid"
 
     return best
 

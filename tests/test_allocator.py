@@ -114,6 +114,33 @@ def test_no_duration_picks_nearest():
     assert res["spot_id"] == "E-1"
 
 
+def test_requested_spot_honored_when_free():
+    # Sürücü belirli yer isterse (D-34) ve boşsa oraya yerleştirilmeli
+    spots = _spots_with_free({"D-34", "E-27"})
+    res = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                           requested_spot_id="D-34")
+    assert res["spot_id"] == "D-34"
+    assert res["requested_status"] == "ok"
+
+
+def test_requested_spot_taken_falls_back():
+    # İstenen yer DOLUYSA alternatife düşmeli ve durum "taken" işaretlenmeli
+    spots = _spots_with_free({"E-27"})        # D-34 dolu (free değil)
+    res = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                           requested_spot_id="D-34")
+    assert res["spot_id"] == "E-27"
+    assert res["requested_status"] == "taken"
+
+
+def test_requested_spot_invalid_falls_back():
+    # Olmayan yer (A-99) -> alternatif + "invalid"
+    spots = _spots_with_free({"E-27"})
+    res = allocator.find_best_parking_spot("normal", "any", spots=spots,
+                                           requested_spot_id="A-99")
+    assert res["spot_id"] == "E-27"
+    assert res["requested_status"] == "invalid"
+
+
 def test_cost_field_is_distance_to_ideal():
     # Sonuçtaki 'cost' alanı |d_i - ALPHA*t| olmalı (şeffaflık/açıklanabilirlik)
     import config
