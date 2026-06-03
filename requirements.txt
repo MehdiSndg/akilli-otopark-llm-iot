@@ -15,6 +15,7 @@ requests>=2.31         # Ollama yerel REST çağrıları + genel HTTP
 # --- Web arayüzü (FastAPI + Canvas) ---
 fastapi>=0.110         # REST + WebSocket sunucusu (görselleştirme katmanı)
 uvicorn[standard]>=0.27  # ASGI sunucu + websockets desteği
+pydantic>=2.0          # Veri doğrulama (MQTT mesajları + LLM parametreleri + API gövdeleri)
 
 # --- Yardımcılar ---
 python-dotenv>=1.0     # .env'den API anahtarı / ayar okuma

@@ -8,6 +8,13 @@ topolojisi için:
   - Sağlık/telemetri: otopark/health/<id>          (batarya, sinyal, çevrimiçi)
   - Ağ geçidi LWT  : otopark/gateway/status        (süreç çökerse broker "offline" der)
 
+UÇ (EDGE) ZEKÂ: ham sensör okuması doğrudan yayınlanmaz. Sensör düğümü, veriyi
+merkeze göndermeden ÖNCE yerel bir karar verir (debounce): kısa süreli geçişleri
+(önünden geçen yaya/araç) gerçek park etmeden ayırır. Yalnızca birkaç tur kararlı
+kalan değişiklik "gerçek" sayılıp yayınlanır; tek-tur sıçramalar gürültü olarak
+edge'de filtrelenir (EDGE_STATS ile sayılır). Bu, "zekâ merkeze değil nesneye
+taşınır" temasının somut örneğidir.
+
 Doluluk GÜNÜN SAATİNE göre değişir: gece düşük, sabah dolar, öğle/akşam zirve.
 Birkaç sensör bilinçli olarak "zayıf pil"dir; pilleri hızlı tükenir ve sonunda
 çevrimdışı olur (anomali panelinin gerçek içerikle dolması için).
@@ -25,7 +32,9 @@ import paho.mqtt.client as mqtt
 
 import config
 from algorithm.graph import build_parking
-from backend import database
+from backend import database, log
+
+logger = log.get(__name__)
 
 # Simülasyon başlangıcı ve saat ofseti (08:00'da başlasın — sabah dolma yayında)
 _START = time.time()
@@ -33,6 +42,11 @@ _OFFSET_HOURS = 8.0
 
 # Web arayüzünün okuduğu canlı durum (saat + yoğunluk etiketi)
 SIM_STATE = {"hour": _OFFSET_HOURS, "busy": "Orta", "target": 0.0}
+
+# Edge (uç) filtreleme istatistiği — UI'da "filtrelenen gürültü" olarak gösterilir.
+# filtered : edge'de elenen geçici/pass-by sinyal sayısı (merkeze hiç gitmedi)
+# confirmed: edge'in "gerçek" sayıp yayınladığı doluluk değişimi sayısı
+EDGE_STATS = {"filtered": 0, "confirmed": 0}
 
 
 def sim_hour():
@@ -67,31 +81,79 @@ def _initial_state():
     return {sid: (sid in occupied) for sid in ids}
 
 
-def _tick(state, spot_ids, publish):
-    """Bir adım: doluluğu o saatin hedefine doğru yaklaştır, değişiklikleri yayınla."""
+# ---------------------------------------------------------------------------
+# Uç (edge) gürültü filtresi — sensör düğümünde yerel debounce kararı
+# ---------------------------------------------------------------------------
+class EdgeFilter:
+    """Sensör düğümünde yerel gürültü filtreleme (debounce).
+
+    Ham okuma confirmed'dan farklıysa hemen yayınlanmaz; DEBOUNCE_TICKS tur
+    boyunca aynı yönde KARARLI kalırsa "gerçek" sayılıp confirmed güncellenir.
+    Kararlılığa ulaşmadan eski haline dönen okumalar = geçici geçiş (pass-by) =
+    gürültü; merkeze hiç yayınlanmaz, yalnızca sayılır."""
+
+    def __init__(self, initial, debounce_ticks):
+        self.confirmed = dict(initial)        # yayınlanmış/onaylı durum
+        self.debounce = max(1, debounce_ticks)
+        self.cand = {}                        # sid -> [aday_değer, streak]
+
+    def feed(self, sid, raw):
+        """Ham okumayı işle. Yayınlanacak yeni onaylı değer varsa onu, yoksa None döndür."""
+        if raw == self.confirmed[sid]:
+            # Aday bir değişiklik vardı ama geri döndü -> geçici geçiş, filtrele
+            if sid in self.cand:
+                del self.cand[sid]
+                EDGE_STATS["filtered"] += 1
+            return None
+        c = self.cand.get(sid)
+        if c and c[0] == raw:
+            c[1] += 1
+        else:
+            self.cand[sid] = c = [raw, 1]
+        if c[1] >= self.debounce:             # yeterince kararlı -> gerçek değişim
+            self.confirmed[sid] = raw
+            del self.cand[sid]
+            EDGE_STATS["confirmed"] += 1
+            return raw
+        return None
+
+
+def _tick(raw, spot_ids, efilter, publish):
+    """Bir adım: ham doluluğu hedefe yaklaştır, gürültü bindir, edge'de filtrele."""
     hour = sim_hour()
     target = occupancy_target(hour)
     SIM_STATE.update(hour=hour, target=target, busy=busy_label(target))
 
+    # 1) Gerçek değişiklikler -> ham duruma uygula (kalıcı; araçlar gelir/gider)
     target_count = int(target * len(spot_ids))
-    current = sum(1 for v in state.values() if v)
+    current = sum(1 for v in raw.values() if v)
     diff = target_count - current
     n = min(abs(diff), 6)
-
-    if diff > 0:                                  # dolması gerekiyor -> araçlar gelir
-        empties = [s for s in spot_ids if not state[s]]
+    if diff > 0:
+        empties = [s for s in spot_ids if not raw[s]]
         for sid in random.sample(empties, min(n, len(empties))):
-            state[sid] = True
-            publish(sid, True)
-    elif diff < 0:                                # boşalması gerekiyor -> araçlar gider
-        occupied = [s for s in spot_ids if state[s]]
+            raw[sid] = True
+    elif diff < 0:
+        occupied = [s for s in spot_ids if raw[s]]
         for sid in random.sample(occupied, min(n, len(occupied))):
-            state[sid] = False
-            publish(sid, False)
-    else:                                         # hedefteyiz -> küçük dalgalanma
+            raw[sid] = False
+    else:
         sid = random.choice(spot_ids)
-        state[sid] = not state[sid]
-        publish(sid, state[sid])
+        raw[sid] = not raw[sid]
+
+    # 2) Geçici gürültü (pass-by): yalnız BU turun okumasına kısa "dolu" sıçraması
+    reading = dict(raw)
+    if random.random() < config.EDGE_NOISE_PROB:
+        cands = [s for s in spot_ids
+                 if not raw[s] and not efilter.confirmed[s] and s not in efilter.cand]
+        for sid in random.sample(cands, min(config.EDGE_NOISE_MAX, len(cands))):
+            reading[sid] = True              # sensör önünden geçiş -> kısa süreli sinyal
+
+    # 3) Edge filtre: yalnızca kararlı (gerçek) değişiklikler merkeze yayınlanır
+    for sid in spot_ids:
+        confirmed = efilter.feed(sid, reading[sid])
+        if confirmed is not None:
+            publish(sid, confirmed)
 
 
 # ---------------------------------------------------------------------------
@@ -153,10 +215,10 @@ def _publish(client, spot_id, occupied):
     }), qos=1, retain=True)
 
 
-def _record_sample(state):
+def _record_sample(raw):
     """Toplam doluluk örneği kaydet (analitik zaman grafiği için)."""
-    occ = sum(1 for v in state.values() if v)
-    database.add_sample(occ, len(state))
+    occ = sum(1 for v in raw.values() if v)
+    database.add_sample(occ, len(raw))
 
 
 def _sleep_interruptible(interval, stop_event):
@@ -166,13 +228,13 @@ def _sleep_interruptible(interval, stop_event):
         waited += 0.1
 
 
-def _loop(state, spot_ids, health, stop_event, interval, occ_pub, health_client):
-    """Ortak döngü: doluluk + periyodik sağlık telemetrisi + periyodik örnek."""
+def _loop(raw, spot_ids, efilter, health, stop_event, interval, occ_pub, health_client):
+    """Ortak döngü: doluluk + edge filtre + periyodik sağlık telemetrisi + örnek."""
     tick = 0
     while not (stop_event and stop_event.is_set()):
-        _tick(state, spot_ids, occ_pub)
+        _tick(raw, spot_ids, efilter, occ_pub)
         if tick % config.SAMPLE_EVERY == 0:
-            _record_sample(state)
+            _record_sample(raw)
         if tick % config.HEALTH_PUBLISH_EVERY == 0:
             _step_health(health)
             _publish_health(health_client, health)
@@ -180,26 +242,28 @@ def _loop(state, spot_ids, health, stop_event, interval, occ_pub, health_client)
         _sleep_interruptible(interval, stop_event)
 
 
-def _run_brokerless(state, spot_ids, health, stop_event, interval):
+def _run_brokerless(raw, spot_ids, efilter, health, stop_event, interval):
     """Broker yokken yedek: değişiklikleri doğrudan SQLite'a yaz."""
-    for sid, occ in state.items():
+    for sid, occ in raw.items():
         database.set_occupied(sid, occ)
     _publish_health(None, health)
-    print(f"[simulator] (brokersız) {len(state)} yer + sağlık DB'ye yazıldı")
-    _loop(state, spot_ids, health, stop_event, interval,
+    logger.warning("(brokersız) %d yer + sağlık DB'ye yazıldı", len(raw))
+    _loop(raw, spot_ids, efilter, health, stop_event, interval,
           occ_pub=lambda sid, occ: database.set_occupied(sid, occ),
           health_client=None)
-    print("[simulator] (brokersız) durduruldu")
+    logger.info("(brokersız) durduruldu")
 
 
 def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     """Simülatör döngüsü. stop_event verilirse set edilince temiz durur."""
     interval = config.SIM_INTERVAL_SEC if interval is None else interval
-    state = _initial_state()
-    spot_ids = list(state.keys())
+    raw = _initial_state()
+    spot_ids = list(raw.keys())
+    efilter = EdgeFilter(raw, config.EDGE_DEBOUNCE_TICKS)
     health = _init_health(spot_ids)
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="otopark-sensor")
+    client.reconnect_delay_set(min_delay=1, max_delay=16)   # kopması durumunda yeniden bağlan
     # LWT (Last Will): süreç beklenmedik kapanırsa broker bunu yayınlar
     client.will_set(config.MQTT_TOPIC_GATEWAY,
                     json.dumps({"status": "offline", "ts": time.time()}),
@@ -207,9 +271,9 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     try:
         client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
     except OSError as e:
-        print(f"[simulator] Broker'a bağlanılamadı ({config.MQTT_HOST}:{config.MQTT_PORT}); "
-              f"doluluk doğrudan DB'ye yazılacak. ({e})")
-        _run_brokerless(state, spot_ids, health, stop_event, interval)
+        logger.warning("Broker'a bağlanılamadı (%s:%s); doluluk doğrudan DB'ye yazılacak. (%s)",
+                       config.MQTT_HOST, config.MQTT_PORT, e)
+        _run_brokerless(raw, spot_ids, efilter, health, stop_event, interval)
         return
     client.loop_start()
 
@@ -217,14 +281,14 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     client.publish(config.MQTT_TOPIC_GATEWAY,
                    json.dumps({"status": "online", "ts": time.time()}), qos=1, retain=True)
 
-    for sid, occ in state.items():           # başlangıç durumunu yayınla
+    for sid, occ in raw.items():             # başlangıç durumunu yayınla
         _publish(client, sid, occ)
     _publish_health(client, health)
-    print(f"[simulator] {len(state)} yer + sağlık telemetrisi yayınlandı "
-          f"(saat {SIM_STATE['hour']:.1f}, yoğunluk {SIM_STATE['busy']})")
+    logger.info("%d yer + sağlık telemetrisi yayınlandı (saat %.1f, yoğunluk %s)",
+                len(raw), SIM_STATE['hour'], SIM_STATE['busy'])
 
     try:
-        _loop(state, spot_ids, health, stop_event, interval,
+        _loop(raw, spot_ids, efilter, health, stop_event, interval,
               occ_pub=lambda sid, occ: _publish(client, sid, occ),
               health_client=client)
     finally:
@@ -234,11 +298,12 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
                        qos=1, retain=True)
         client.loop_stop()
         client.disconnect()
-        print("[simulator] durduruldu")
+        logger.info("durduruldu (edge: %d gürültü filtrelendi, %d gerçek değişim)",
+                    EDGE_STATS["filtered"], EDGE_STATS["confirmed"])
 
 
 if __name__ == "__main__":
     try:
         run_simulator()
     except KeyboardInterrupt:
-        print("\n[simulator] Ctrl+C ile çıkılıyor")
+        logger.info("Ctrl+C ile çıkılıyor")

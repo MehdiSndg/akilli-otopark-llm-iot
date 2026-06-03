@@ -471,15 +471,30 @@ function addReserveButton(spotId){
 
 /* ---------- IoT sistem durumu (ağ geçidi + sensör filosu + anomali) ---------- */
 const gatewayEl=document.getElementById("gateway"), sensorsEl=document.getElementById("sensors");
+const edgeEl=document.getElementById("edge");
 const anomalyBadge=document.getElementById("anomaly-badge"), anomalyCount=document.getElementById("anomaly-count");
 const anomalyListEl=document.getElementById("anomaly-list");
 function updateSysRow(d){
   if(d.gateway){ gatewayEl.classList.toggle("online", d.gateway.online); gatewayEl.classList.toggle("offline", !d.gateway.online);
     gatewayEl.lastChild.textContent = d.gateway.online ? " Ağ geçidi ✓" : " Ağ geçidi ✕"; }
   if(d.sensors){ sensorsEl.textContent = `📡 ${d.sensors.online}/${d.sensors.total} · %${d.sensors.avg_battery}`; }
+  if(d.edge && edgeEl){ edgeEl.textContent = `🛡 Edge: ${d.edge.filtered} gürültü`; }
   if(d.anomalies){ const t=d.anomalies.error+d.anomalies.warning;
     anomalyBadge.hidden = t===0; anomalyCount.textContent = t; }
 }
+
+/* ---------- Tahmin (öngörücü zekâ) ---------- */
+const predictBtn=document.getElementById("predict-btn");
+if(predictBtn) predictBtn.onclick=async ()=>{
+  predictBtn.disabled=true;
+  try{
+    const p=await (await fetch("/api/predict?horizon_min=15")).json();
+    const arrow = p.trend==="rising" ? "📈" : (p.trend==="falling" ? "📉" : "➖");
+    bubble("system", `${arrow} ${p.advice}`,
+      `şimdi %${Math.round(p.now_ratio*100)} → ~%${Math.round(p.predicted_ratio*100)} (15 dk)`);
+  }catch(e){ bubble("system","Tahmin alınamadı: "+e.message); }
+  finally{ predictBtn.disabled=false; }
+};
 anomalyBadge.onclick=async ()=>{
   if(!anomalyListEl.hidden){ anomalyListEl.hidden=true; anomalySpots={}; return; }
   try{

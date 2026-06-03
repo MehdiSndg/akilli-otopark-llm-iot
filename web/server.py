@@ -29,13 +29,17 @@ import time
 import config
 from algorithm.graph import build_parking, ENTRANCES
 from algorithm import allocator
-from backend import database, parking_state, anomaly, analytics
+from backend import database, parking_state, anomaly, analytics, predict, log
 from llm import orchestrator
 from simulator import sensor_simulator
 from backend import mqtt_client
 
-# Aktif rezervasyonlar: spot_id -> son geçerlilik zamanı (sweeper süresi dolanı düşürür)
+logger = log.get(__name__)
+
+# Aktif rezervasyonlar: spot_id -> son geçerlilik zamanı (sweeper süresi dolanı düşürür).
+# Birden çok thread (istek işleyicileri + sweeper) erişir -> kilitle koru (race önle).
 _RESERVATIONS = {}
+_RES_LOCK = threading.Lock()
 
 # Statik yerleşim/graf bir kez kurulur (doluluk DB'den canlı gelir)
 _SPOTS, _GRAPH = build_parking()
@@ -107,6 +111,7 @@ def _state_payload():
     total = len(spots)
     sim = sensor_simulator.SIM_STATE
     anom = anomaly.detect()
+    edge = sensor_simulator.EDGE_STATS
     return {"occupancy": occupancy,
             "reserved": reserved,
             "counts": {"total": total, "occupied": occ, "reserved": res,
@@ -114,20 +119,24 @@ def _state_payload():
             "sim": {"hour": sim["hour"], "busy": sim["busy"]},
             "sensors": anomaly.health_summary(),
             "gateway": {"online": mqtt_client.GATEWAY_STATE["online"]},
-            "anomalies": anom["counts"]}
+            "anomalies": anom["counts"],
+            "edge": {"filtered": edge["filtered"], "confirmed": edge["confirmed"]}}
 
 
 def _reservation_sweeper(stop):
     """Süresi dolan ya da araç gelip park edilen rezervasyonları temizler."""
     while not stop.is_set():
         now = time.time()
-        for sid, expire in list(_RESERVATIONS.items()):
+        with _RES_LOCK:
+            items = list(_RESERVATIONS.items())
+        for sid, expire in items:
             spot = database.get_spot(sid)
             if spot is None or spot["occupied"] or not spot["reserved"] or now > expire:
                 # Süre doldu ya da araç park etti (set_occupied reserved'i zaten kaldırır)
                 if spot is not None and spot["reserved"] and not spot["occupied"]:
                     database.set_reserved(sid, False)
-                _RESERVATIONS.pop(sid, None)
+                with _RES_LOCK:
+                    _RESERVATIONS.pop(sid, None)
         stop.wait(2.0)
 
 
@@ -144,7 +153,7 @@ async def lifespan(app):
     for t in threads:
         t.start()
     app.state.stop = stop
-    print("[web] Sunucu hazır -> http://127.0.0.1:8000")
+    logger.info("Sunucu hazır -> http://127.0.0.1:8000")
     yield
     stop.set()
 
@@ -214,7 +223,8 @@ def reserve(req: ReserveRequest):
     if spot["reserved"]:
         return {"ok": False, "reason": "Bu yer zaten rezerve."}
     database.set_reserved(req.spot_id, True)
-    _RESERVATIONS[req.spot_id] = time.time() + config.RESERVATION_TIMEOUT_SEC
+    with _RES_LOCK:
+        _RESERVATIONS[req.spot_id] = time.time() + config.RESERVATION_TIMEOUT_SEC
     return {"ok": True, "spot_id": req.spot_id,
             "timeout_sec": config.RESERVATION_TIMEOUT_SEC}
 
@@ -222,8 +232,21 @@ def reserve(req: ReserveRequest):
 @app.post("/api/cancel_reservation")
 def cancel_reservation(req: ReserveRequest):
     database.set_reserved(req.spot_id, False)
-    _RESERVATIONS.pop(req.spot_id, None)
+    with _RES_LOCK:
+        _RESERVATIONS.pop(req.spot_id, None)
     return {"ok": True, "spot_id": req.spot_id}
+
+
+@app.get("/api/predict")
+def predict_endpoint(horizon_min: int = 15):
+    """Yakın gelecek doluluk tahmini (öngörücü zekâ)."""
+    return predict.predict(horizon_min=horizon_min)
+
+
+@app.get("/api/assignments")
+def assignments_endpoint(limit: int = 50):
+    """Son yönlendirme kararları (karar/oturum logu — denetim izi)."""
+    return {"assignments": database.get_assignments(limit)}
 
 
 @app.post("/api/request")

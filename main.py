@@ -14,17 +14,21 @@ Her iki arayüz de aynı backend'i (SQLite + A* + LLM) kullanır.
 
 import sys
 
+from backend import log
+
+logger = log.get(__name__)
+
 
 def run_web():
     """Web arayüzünü (FastAPI) başlat. Backend thread'leri lifespan'de açılır."""
     import uvicorn
-    print("[main] Web arayüzü baslatiliyor -> http://127.0.0.1:8000")
+    logger.info("Web arayüzü başlatılıyor -> http://127.0.0.1:8000")
     uvicorn.run("web.server:app", host="127.0.0.1", port=8000, reload=False)
 
 
 def run_pygame():
     """Alternatif masaüstü Pygame arayüzünü başlat."""
-    print("[main] Pygame arayuzu baslatiliyor...")
+    logger.info("Pygame arayüzü başlatılıyor...")
     from ui import pygame_app
     pygame_app.run()
 

@@ -100,25 +100,28 @@ class GeminiClient(LLMClient):
         self._genai = genai
         self._client = genai.Client(api_key=config.GEMINI_API_KEY)
         self._model = config.LLM_MODEL
-        self._tool = self._build_tool()
+        self._tool = self._build_tools()
 
-    def _build_tool(self):
-        """Nötr tools.TOOL tanımını Gemini formatına çevir."""
+    def _build_tools(self):
+        """Nötr tools.TOOLS tanımlarını tek bir Gemini Tool'una (çok fonksiyon) çevir."""
         from google.genai import types
-        t = tools.TOOL
         type_map = {"string": "STRING", "boolean": "BOOLEAN",
                     "integer": "INTEGER", "number": "NUMBER"}
-        props = {}
-        for name, spec in t["parameters"].items():
-            gem_type = type_map.get(spec["type"], "STRING")
-            kwargs = {"type": gem_type, "description": spec.get("description", "")}
-            if "enum" in spec:
-                kwargs["enum"] = spec["enum"]
-            props[name] = types.Schema(**kwargs)
-        schema = types.Schema(type="OBJECT", properties=props, required=t["required"])
-        return types.Tool(function_declarations=[types.FunctionDeclaration(
-            name=t["name"], description=t["description"], parameters=schema,
-        )])
+        decls = []
+        for t in tools.TOOLS:
+            props = {}
+            for name, spec in t["parameters"].items():
+                gem_type = type_map.get(spec["type"], "STRING")
+                kwargs = {"type": gem_type, "description": spec.get("description", "")}
+                if "enum" in spec:
+                    kwargs["enum"] = spec["enum"]
+                props[name] = types.Schema(**kwargs)
+            # Parametresiz araçlarda da geçerli OBJECT şeması ver
+            schema = types.Schema(type="OBJECT", properties=props,
+                                  required=t.get("required", []))
+            decls.append(types.FunctionDeclaration(
+                name=t["name"], description=t["description"], parameters=schema))
+        return types.Tool(function_declarations=decls)
 
     def extract_tool_call(self, user_text):
         from google.genai import types

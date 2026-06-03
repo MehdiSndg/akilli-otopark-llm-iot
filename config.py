@@ -120,6 +120,19 @@ SAMPLE_EVERY = 3                   # kaç simülatör turunda bir toplam doluluk
 
 
 # ---------------------------------------------------------------------------
+# Uç (edge) zekâ — sensör düğümünde yerel karar / gürültü filtreleme
+# ---------------------------------------------------------------------------
+# "Nesnelerin yapay zekası"nın özü: zekâ merkeze değil nesnenin kendisine taşınır.
+# Park yeri sensörü, ham okumayı merkeze yollamadan ÖNCE basit bir karar verir:
+# kısa süreli geçişleri (önünden geçen yaya/araç) gerçek park etmeden ayırır
+# (debounce). Yalnızca DEBOUNCE_TICKS tur boyunca KARARLI kalan değişiklik
+# "gerçek" sayılıp yayınlanır; tek-tur sıçramalar gürültü olarak filtrelenir.
+EDGE_DEBOUNCE_TICKS = 2            # bir değişimin "gerçek" sayılması için kararlı kalması gereken tur
+EDGE_NOISE_PROB = 0.30            # her turda geçici (pass-by) gürültü sinyali enjekte etme olasılığı
+EDGE_NOISE_MAX = 3                # bir turda en çok kaç boş yere geçici sinyal bindirilir
+
+
+# ---------------------------------------------------------------------------
 # Veritabanı
 # ---------------------------------------------------------------------------
 DB_PATH = os.path.join(os.path.dirname(__file__), "parking.db")

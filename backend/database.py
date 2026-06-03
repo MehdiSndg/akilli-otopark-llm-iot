@@ -7,6 +7,8 @@ yerleşiminden tohumlanır; dinamik veriler burada saklanır:
   - sensor_health  : her sensörün sağlığı (batarya, sinyal, çevrimiçi, son görülme)
   - events         : her doluluk değişimi (geçmiş + kalış süresi + anomali için)
   - occupancy_samples : periyodik toplam doluluk örneği (zaman grafiği için)
+  - assignments    : her yönlendirme kararı (araç, zaman, yer, parametre, sonuç) —
+                     geçmiş veri (tahmin için) + analitik/denetim izi
 
 Eşzamanlılık: simülatör/abone ayrı thread'de yazar, UI okur. Bu yüzden her
 işlemde yeni bir bağlantı açılır ve WAL modu kullanılır (eşzamanlı okuma/yazma).
@@ -21,7 +23,7 @@ import config
 from algorithm.graph import build_parking
 
 # Şema sürümü: yeni tablo/sütun eklendiğinde artır -> eski DB otomatik tazelenir.
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 def _connect():
@@ -85,11 +87,31 @@ def _create_tables(conn):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS assignments (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts             REAL    NOT NULL,
+            spot_id        TEXT,
+            vehicle_type   TEXT    NOT NULL,
+            preference     TEXT    NOT NULL,
+            needs_charging INTEGER NOT NULL,
+            duration_hours INTEGER,
+            entrance       TEXT,
+            distance       REAL,
+            walk_to_exit   REAL,
+            cost           REAL,
+            source         TEXT    NOT NULL,
+            success        INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_assign_ts ON assignments(ts)")
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
 
 
 def _drop_all(conn):
-    for t in ("spots", "sensor_health", "events", "occupancy_samples"):
+    for t in ("spots", "sensor_health", "events", "occupancy_samples", "assignments"):
         conn.execute(f"DROP TABLE IF EXISTS {t}")
 
 
@@ -136,6 +158,7 @@ def _seed(conn, spots, randomize_occupancy):
     conn.execute("DELETE FROM sensor_health")
     conn.execute("DELETE FROM events")
     conn.execute("DELETE FROM occupancy_samples")
+    conn.execute("DELETE FROM assignments")
     spot_rows, health_rows = [], []
     for s in spots:
         occupied = 1 if (randomize_occupancy and
@@ -353,6 +376,47 @@ def get_last_changes():
         rows = conn.execute("SELECT id, last_change, occupied FROM spots").fetchall()
         return {r["id"]: {"last_change": r["last_change"], "occupied": bool(r["occupied"])}
                 for r in rows}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Yönlendirme kararları (karar/oturum log tablosu — geçmiş veri + denetim izi)
+# ---------------------------------------------------------------------------
+def log_assignment(params, result, source, ts=None):
+    """Bir yönlendirme kararını kaydet: hangi araç, hangi parametre, hangi sonuç.
+
+    Bu tablo hem geçmiş veri üretir (tahmin modeline zemin) hem de "her kararı
+    izleyebiliyoruz" diyebilmek için denetim izi sağlar. result None ise (uygun
+    yer yok) success=0 olarak yine kaydedilir."""
+    p = params or {}
+    r = result or {}
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO assignments (ts, spot_id, vehicle_type, preference, "
+            "needs_charging, duration_hours, entrance, distance, walk_to_exit, "
+            "cost, source, success) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts if ts is not None else time.time(),
+             r.get("spot_id"), p.get("vehicle_type", "normal"),
+             p.get("preference", "any"), 1 if p.get("needs_charging") else 0,
+             p.get("duration_hours"), p.get("entrance"),
+             r.get("distance"), r.get("walk_to_exit"), r.get("cost"),
+             source, 1 if result else 0),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_assignments(limit=500):
+    """Son N yönlendirme kararı (eskiden yeniye)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM assignments ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
     finally:
         conn.close()
 

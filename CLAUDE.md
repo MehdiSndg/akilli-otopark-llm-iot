@@ -515,11 +515,48 @@ test edildi; canvas görselleri kullanıcıda doğrulanacak.
       (rezerve yerler turuncu kesikli + R), Canvas analitik kaplama (zaman çizgisi +
       bölge bar), ısı haritası toggle, sesli giriş (Web Speech API tr-TR).
 
+**Faz 8 — Edge AI + tahmin + çok-araçlı LLM + mühendislik olgunluğu (A+B grubu)**
+Kullanıcı öneri listesinden A (dersin kalbi) + B (mühendislik olgunluğu) grupları
+seçildi. Hepsi pytest (37 geçer) + canlı API ile uçtan uca doğrulandı.
+- [x] **Edge filtering (uç zekâ):** simulator/sensor_simulator.py EdgeFilter — sensör
+      düğümü ham okumayı yayınlamadan önce yerel debounce uygular. Kısa süreli
+      geçişler (pass-by gürültüsü) EDGE_DEBOUNCE_TICKS tur kararlı kalmazsa elenir;
+      yalnız "gerçek" park değişimleri merkeze gider. EDGE_STATS sayacı + UI'da
+      "🛡 Edge: N gürültü" pill. Canlı: filtered=8/confirmed=36 doğrulandı.
+      Sunum teması: bulut zekâsı (LLM) ↔ uç zekâsı (sensör mantığı).
+- [x] **Tahminleyici zekâ (predict):** backend/predict.py — occupancy_samples üzerinde
+      en küçük kareler eğilimi + occupancy_target gün-içi örüntüsü harmanı ile kısa
+      vadeli doluluk tahmini. /api/predict + UI "🔮 Tahmin" butonu + LLM aracı.
+      "15 dk sonra ~%X dolu, ~N boş" öngörücü yönlendirme.
+- [x] **LLM çok-araçlılık (konuşan asistan):** tools.py 3 araç (find_best_parking_spot
+      + get_parking_stats + predict_availability); client.py çok-fonksiyon Gemini Tool;
+      orchestrator niyet-dispatch (LLM tool seçer; yoksa keyword niyet sapması). Çok
+      dilli (TR/EN). Canlı: gerçek Gemini "kaç boş yer" → stats, "dolar mı" → predict,
+      "elektrikli" → find seçti (source=llm).
+- [x] **Karar/oturum log tablosu:** DB şema v3 assignments tablosu (ts, spot, araç,
+      tercih, süre, mesafe, maliyet, kaynak, başarı). orchestrator her gerçek atamayı
+      loglar (testte spots enjekte edilince atlanır). /api/assignments. Tahmin için
+      geçmiş veri + denetim izi.
+- [x] **Pydantic doğrulama:** backend/schemas.py — MQTT sensör mesajları (SpotMessage/
+      HealthMessage/GatewayMessage, KATI: bozuk veri reddedilir) + LLM parametreleri
+      (ParkingParams, YUMUŞAK: geçersiz→varsayılan). mqtt_client ValidationError ile
+      şema dışı mesajı reddeder. Canlı: kötü batarya/status reddi doğrulandı.
+- [x] **Loglama:** backend/log.py merkezi seviyeli logging (INFO/WARNING/ERROR),
+      LOG_LEVEL/LOG_FILE .env. print'ler simulator/mqtt_client/orchestrator/server/
+      main'de logger'a çevrildi.
+- [x] **Eşzamanlılık + reconnect:** server.py _RES_LOCK (threading.Lock) ile paylaşılan
+      rezervasyon sözlüğü race'e karşı korundu; mqtt_client reconnect_delay_set +
+      on_disconnect + ilk bağlantı retry döngüsü (graceful degradation); simülatör
+      client'ına da reconnect_delay_set.
+
 **Faz 6 — Sunum & teslim: henüz başlanmadı.**
 
-**Sıradaki:** Faz 6 (sunum içeriği + demo provası) — artık IoT katmanı çok daha
+**Sıradaki:** Faz 6 (sunum içeriği + demo provası) — artık IoT/AIoT katmanı çok
 zengin: MQTT QoS/retain/LWT, sensör telemetrisi, anomali/bakım, rezervasyon,
-analitik, sesli giriş anlatılacak. İsteğe bağlı: gerçek ESP32/kamera-CV sensörü.
+analitik, sesli giriş + **edge AI (debounce), tahminleyici zekâ, çok-araçlı LLM
+asistanı, karar logu, Pydantic doğrulama, logging, kilit/reconnect** anlatılacak.
+İsteğe bağlı (C grubu, kullanıcı şimdilik istemedi): senaryo profilleri, GitHub
+Actions CI + rozet, Docker/compose. İsteğe bağlı: gerçek ESP32/kamera-CV sensörü.
 
 ### Notlar / Kararlar
 - Python 3.12.10 kullanılıyor (plan 3.11+ diyordu, uyumlu).

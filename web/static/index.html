@@ -51,6 +51,7 @@
       <div class="sysrow">
         <span class="pill" id="gateway"><span class="dot"></span> Ağ geçidi</span>
         <span class="pill" id="sensors">📡 —/—</span>
+        <span class="pill" id="edge" title="Sensör düğümünde (edge) filtrelenen geçici/gürültü sinyali — merkeze hiç gitmedi">🛡 Edge —</span>
         <button type="button" class="pill alert" id="anomaly-badge" hidden>⚠ <span id="anomaly-count">0</span></button>
       </div>
       <div class="anomaly-list" id="anomaly-list" hidden></div>
@@ -62,6 +63,7 @@
 
       <div class="actions">
         <button type="button" id="multi" class="act-btn">🚗 Aynı anda 3 araç</button>
+        <button type="button" id="predict-btn" class="act-btn">🔮 Tahmin</button>
         <button type="button" id="analytics-btn" class="act-btn">📊 Analitik</button>
         <button type="button" id="heatmap-btn" class="act-btn">🔥 Isı haritası</button>
       </div>

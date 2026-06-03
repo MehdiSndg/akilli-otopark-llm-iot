@@ -17,62 +17,94 @@ import json
 import time
 
 import paho.mqtt.client as mqtt
+from pydantic import ValidationError
 
 import config
-from backend import database
+from backend import database, log
+from backend.schemas import SpotMessage, HealthMessage, GatewayMessage
+
+logger = log.get(__name__)
 
 # Ağ geçidi (sensör simülatörü) çevrimiçi mi? LWT mesajıyla güncellenir.
 GATEWAY_STATE = {"online": False, "ts": 0.0}
 
 
 def _on_connect(client, userdata, flags, reason_code, properties=None):
-    print(f"[mqtt] broker'a bağlanıldı (rc={reason_code}), abone olunuyor: "
-          f"{config.MQTT_TOPIC_SPOTS_WILDCARD} + health + gateway")
+    logger.info("broker'a bağlanıldı (rc=%s); abone: %s + health + gateway",
+                reason_code, config.MQTT_TOPIC_SPOTS_WILDCARD)
     client.subscribe(config.MQTT_TOPIC_SPOTS_WILDCARD, qos=1)
     client.subscribe(config.MQTT_TOPIC_HEALTH_WILDCARD, qos=1)
     client.subscribe(config.MQTT_TOPIC_GATEWAY, qos=1)
     client.subscribe(config.MQTT_TOPIC, qos=1)   # geriye dönük (eski tekil topic)
 
 
+def _on_disconnect(client, userdata, *args):
+    """Bağlantı koparsa logla; paho reconnect_delay_set ile otomatik yeniden bağlanır."""
+    logger.warning("broker bağlantısı koptu; yeniden bağlanmaya çalışılıyor...")
+
+
 def _on_message(client, userdata, msg):
+    """Gelen mesajı topic'e göre yönlendir; Pydantic ile DOĞRULA (bozuk veri reddedilir)."""
     topic = msg.topic
     try:
         data = json.loads(msg.payload.decode())
     except ValueError as e:
-        print(f"[mqtt] geçersiz JSON atlandı ({topic}): {e}")
+        logger.warning("geçersiz JSON atlandı (%s): %s", topic, e)
         return
 
     try:
         if topic == config.MQTT_TOPIC_GATEWAY:
-            GATEWAY_STATE.update(online=(data.get("status") == "online"),
-                                 ts=data.get("ts", time.time()))
+            m = GatewayMessage(**data)
+            GATEWAY_STATE.update(online=(m.status == "online"),
+                                 ts=m.ts if m.ts is not None else time.time())
         elif topic.startswith(config.MQTT_TOPIC_BASE + "/health/"):
             spot_id = topic.rsplit("/", 1)[-1]
-            database.set_health(spot_id,
-                                battery=data.get("battery"), rssi=data.get("rssi"),
-                                online=data.get("online"), last_seen=data.get("ts"))
+            m = HealthMessage(**data)
+            database.set_health(spot_id, battery=m.battery, rssi=m.rssi,
+                                online=m.online, last_seen=m.ts)
         else:   # doluluk (otopark/spots/... ya da eski otopark/spots)
-            database.set_occupied(data["spot_id"], bool(data["occupied"]))
-    except KeyError as e:
-        print(f"[mqtt] eksik alan atlandı ({topic}): {e}")
+            m = SpotMessage(**data)
+            database.set_occupied(m.spot_id, m.occupied)
+    except ValidationError as e:
+        # Şema dışı/bozuk sensör verisi sisteme girmeden burada yakalanır
+        logger.warning("şema dışı mesaj reddedildi (%s): %s", topic,
+                       e.errors()[0].get("msg") if e.errors() else e)
 
 
 def _make_client():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=config.MQTT_CLIENT_ID)
     client.on_connect = _on_connect
+    client.on_disconnect = _on_disconnect
     client.on_message = _on_message
+    client.reconnect_delay_set(min_delay=1, max_delay=16)   # üstel geri çekilmeyle yeniden dene
     return client
 
 
-def start_subscriber(stop_event=None):
-    """Aboneyi başlat. stop_event yoksa bloklar (loop_forever); varsa thread dostu."""
+def start_subscriber(stop_event=None, connect_attempts=5):
+    """Aboneyi başlat. stop_event yoksa bloklar (loop_forever); varsa thread dostu.
+
+    İlk bağlantı birkaç kez denenir (broker biraz geç açılmış olabilir);
+    bağlantı sonradan koparsa paho otomatik yeniden bağlanır (graceful degradation).
+    """
     database.init_db()  # tablo + tohum hazır olsun
     client = _make_client()
-    try:
-        client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
-    except OSError as e:
-        print(f"[mqtt] Broker'a bağlanılamadı ({config.MQTT_HOST}:{config.MQTT_PORT}). "
-              f"Mosquitto çalışmıyor olabilir; canlı güncelleme devre dışı. ({e})")
+
+    connected = False
+    for attempt in range(1, connect_attempts + 1):
+        try:
+            client.connect(config.MQTT_HOST, config.MQTT_PORT, keepalive=30)
+            connected = True
+            break
+        except OSError as e:
+            logger.warning("broker'a bağlanılamadı (deneme %d/%d, %s:%s): %s",
+                           attempt, connect_attempts, config.MQTT_HOST, config.MQTT_PORT, e)
+            if stop_event is not None and stop_event.wait(2.0):
+                return
+            elif stop_event is None:
+                time.sleep(2.0)
+    if not connected:
+        logger.error("broker erişilemedi; canlı MQTT güncellemesi devre dışı "
+                     "(simülatör brokersız DB yedeğine düşer).")
         return
 
     if stop_event is None:
@@ -85,11 +117,11 @@ def start_subscriber(stop_event=None):
         finally:
             client.loop_stop()
             client.disconnect()
-            print("[mqtt] abone durduruldu")
+            logger.info("abone durduruldu")
 
 
 if __name__ == "__main__":
     try:
         start_subscriber()
     except KeyboardInterrupt:
-        print("\n[mqtt] Ctrl+C ile çıkılıyor")
+        logger.info("Ctrl+C ile çıkılıyor")

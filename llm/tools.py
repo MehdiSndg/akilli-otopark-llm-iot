@@ -18,12 +18,12 @@ DEFAULTS = {
     "duration_hours": None,        # belirtilmezse süreye göre yerleştirme yapılmaz
 }
 
-# Aracın nötr tanımı (client.py sağlayıcı formatına çevirir)
-TOOL = {
+# --- Araç 1: en uygun park yerini bul (asıl yönlendirme) --------------------
+TOOL_FIND = {
     "name": "find_best_parking_spot",
     "description": (
-        "Sürücünün isteğine göre en uygun BOŞ park yerini bulur. "
-        "Sürücü doğal dille konuştuğunda bu aracı çağır."
+        "Sürücünün isteğine göre en uygun BOŞ park yerini bulur. Sürücü bir yer "
+        "ARADIĞINDA (park etmek/yönlendirilmek istediğinde) bu aracı çağır."
     ),
     "parameters": {
         "vehicle_type": {
@@ -52,18 +52,60 @@ TOOL = {
     "required": ["vehicle_type", "preference", "needs_charging"],
 }
 
+# --- Araç 2: anlık doluluk sorgula ("kaç boş yer var?") ---------------------
+TOOL_STATS = {
+    "name": "get_parking_stats",
+    "description": (
+        "Otoparkın ANLIK doluluk durumunu sorar: kaç yer dolu/boş, engelli ve "
+        "elektrikli boş yer var mı. Sürücü yer aramadan yalnızca durum/doluluk "
+        "sorduğunda (ör. \"kaç boş yer var?\", \"engelli yer var mı?\") bu aracı çağır."
+    ),
+    "parameters": {
+        "vehicle_type": {
+            "type": "string",
+            "enum": list(VEHICLE_TYPES),
+            "description": "İlgili araç tipi için boş yer sayısı sorulduysa belirt; "
+                           "yoksa boş bırak.",
+        },
+    },
+    "required": [],
+}
+
+# --- Araç 3: yakın gelecek doluluk tahmini ("yer bulur muyum?") -------------
+TOOL_PREDICT = {
+    "name": "predict_availability",
+    "description": (
+        "Yakın gelecekteki doluluğu TAHMİN eder (eğilim + gün-içi örüntü). Sürücü "
+        "ileriye dönük sorduğunda (ör. \"birazdan yer bulur muyum?\", \"15 dk sonra "
+        "dolar mı?\", \"otopark dolacak mı?\") bu aracı çağır."
+    ),
+    "parameters": {
+        "horizon_min": {
+            "type": "integer",
+            "description": "Kaç dakika sonrası için tahmin isteniyor (ör. \"yarım "
+                           "saat\"=30). Belirtilmezse 15 varsay.",
+        },
+    },
+    "required": [],
+}
+
+# Tek nötr araç (geriye dönük) + tüm araçların listesi
+TOOL = TOOL_FIND
+TOOLS = [TOOL_FIND, TOOL_STATS, TOOL_PREDICT]
+
 # LLM'e verilecek sistem yönergesi
 SYSTEM_PROMPT = (
-    "Sen bir akıllı otopark yönlendirme asistanısın. Sürücüler sana doğal dille "
-    "nasıl bir park yeri istediklerini söyler. Görevin, isteği anlayıp "
-    "find_best_parking_spot aracını uygun parametrelerle çağırmaktır. "
+    "Sen bir akıllı otopark yönlendirme ASİSTANISIN — tek komut çevirici değil, "
+    "konuşan bir yardımcısın. Sürücünün niyetine göre uygun aracı seç:\n"
+    "- Bir yer arıyor/park etmek istiyorsa -> find_best_parking_spot.\n"
+    "- Anlık doluluk/boş yer soruyorsa -> get_parking_stats.\n"
+    "- Yakın gelecekteki durumu/tahmini soruyorsa -> predict_availability.\n"
     "Park yerine SEN karar vermezsin; kararı yönlendirme algoritması verir. "
-    "Bilgi eksikse makul varsayılanlar kullan: araç tipi belirtilmemişse normal, "
-    "tercih belirtilmemişse any, şarj belirtilmemişse false. "
-    "Elektrikli/şarj ima ediliyorsa vehicle_type=ev ve needs_charging=true yap. "
-    "Sürücü kalış süresini belirtirse (ör. \"2 saat\", \"bütün gün\") duration_hours'ı "
-    "saate çevirerek doldur; belirtmezse boş bırak. "
+    "Bilgi eksikse makul varsayılanlar kullan: araç tipi normal, tercih any, "
+    "şarj false. Elektrikli/şarj ima ediliyorsa vehicle_type=ev ve "
+    "needs_charging=true yap. Kalış süresi belirtilirse (ör. \"2 saat\", \"bütün "
+    "gün\") duration_hours'ı saate çevir; belirtilmezse boş bırak. "
     "Tercih yalnızca yakınlık ifade eder; sürücü bir noktadan UZAK olmak isterse "
     "diğerine yakını seç: \"çıkışa uzak\" -> nearest_entrance, \"girişe uzak\" -> "
-    "nearest_exit."
+    "nearest_exit. Türkçe ya da İngilizce — sürücü hangi dilde yazarsa o dilde anla."
 )
