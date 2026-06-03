@@ -26,6 +26,7 @@ let heatmapOn = false, heatData = {}, heatMax = 1;   // ısı haritası (kullan�
 let vocc = {};          // görsel doluluk (animasyon gecikmeli)
 let prevOcc = null;     // bir önceki gerçek doluluk (fark hesaplamak için)
 let cars = [];          // gerçek olaylarla tetiklenen hareketli araçlar
+let fades = {};         // spot_id -> {dir:+1 beliriş / -1 sönüş, t0} (animasyon slotu doluysa yumuşak geçiş)
 let spotById = {};
 let entranceId = null;
 let aisleIds = [], entranceIds = [], vexitIds = [];
@@ -113,7 +114,7 @@ class EventCar {
   constructor(pts, onArrive){
     this.pts=pts; this.onArrive=onArrive||null; this._fired=false;
     this.seg=0; this.t=0; this.done=false;
-    this.speed=2.4+Math.random()*0.9; this.ang=0;   // gerçekçi, yavaş otopark hızı
+    this.speed=2.4+Math.random()*0.9; this.ang=0;   // gerçekçi, yavaş otopark hızı (takip edilebilir)
     this.color=rand(CARS); this.off=0.4;   // sağ şerit: kesikli çizginin hemen sağı
     this.px=pts[0][0]; this.py=pts[0][1]; this.id=CARID++; this.speedFactor=1;
     this.life=0;   // güvenlik ömrü (sn): çok uzun yolda kalan aracı zorla tamamla
@@ -150,19 +151,38 @@ class EventCar {
     const [sx,sy]=S(x,y); drawCar(sx,sy,this.ang,this.color,len,wid);
   }
 }
+// Aynı anda EKRANDA hareket eden araç sınırı (slot) — otopark doluluğuyla İLGİSİ YOK.
+// Devirsiz (sadece gün eğrisi) düzende eşzamanlı araç sayısı düşüktür; 100 bol gelir,
+// normalde hiçbir araç pat diye silinmez. Aşılırsa (nadir tepe-yoğunluk burst'ü) araç
+// yumuşak fade ile geçer. (Deadlock imkânsız: applyTraffic min hız 0.15 + life>16.)
+const MAX_CARS = 100;
+const FADE_MS = 450;
+function fadeIn(id){  vocc[id]=true;  fades[id]={dir:1,  t0:performance.now()}; }  // yumuşak beliriş
+function fadeOut(id){ vocc[id]=false; fades[id]={dir:-1, t0:performance.now()}; }  // yumuşak sönüş
+// Bir yerin park aracı çizim alfası: fade varsa rampalanır, yoksa doluluk durumu (0/1)
+function carAlpha(id, now){
+  const f=fades[id];
+  if(!f) return vocc[id]?1:0;
+  const k=(now-f.t0)/FADE_MS;
+  if(k>=1){ delete fades[id]; return vocc[id]?1:0; }
+  return f.dir>0 ? k : (1-k);
+}
 function spawnArrival(spotId){
   const sp=spotById[spotId];
-  if(cars.length>16 || !sp || !sp.access || !L.road_nodes[sp.access]){ vocc[spotId]=true; return; }
+  // Slot dolu ya da yol yoksa: pat diye belirme yerine yumuşak beliriş
+  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeIn(spotId); return; }
   const path=dijkstra(rand(entranceIds), sp.access);
-  if(!path){ vocc[spotId]=true; return; }
+  if(!path){ fadeIn(spotId); return; }
+  delete fades[spotId];
   cars.push(new EventCar(path.concat([[sp.x,sp.y]]), ()=>{ vocc[spotId]=true; }));
 }
 function spawnDeparture(spotId){
-  vocc[spotId]=false;
   const sp=spotById[spotId];
-  if(cars.length>16 || !sp || !sp.access || !L.road_nodes[sp.access]) return;
+  // Slot dolu ya da yol yoksa: pat diye silme yerine yumuşak sönüş
+  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeOut(spotId); return; }
   const path=dijkstra(sp.access, rand(vexitIds));
-  if(path) cars.push(new EventCar([[sp.x,sp.y]].concat(path), null));
+  if(path){ delete fades[spotId]; vocc[spotId]=false; cars.push(new EventCar([[sp.x,sp.y]].concat(path), null)); }
+  else fadeOut(spotId);
 }
 
 /* ---------- yönlendirilen araç ---------- */
@@ -283,7 +303,8 @@ function drawSpots(now){
     ctx.strokeStyle=C.paint; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,y);ctx.lineTo(x,y+sh); ctx.moveTo(x+sw,y);ctx.lineTo(x+sw,y+sh);
     const by=upper?y+sh:y; ctx.moveTo(x,by);ctx.lineTo(x+sw,by); ctx.stroke();
-    if(vocc[s.id]) drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw);
+    const a=carAlpha(s.id, now);
+    if(a>0){ ctx.globalAlpha=a; drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw); ctx.globalAlpha=1; }
     else if(s.type==="ev_charging"){ ctx.strokeStyle=C.ev;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); bolt(cx,cy,Math.min(sw,sh)*0.32); }
     else if(s.type==="disabled"){ ctx.strokeStyle=C.disabled;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); wheelchair(cx,cy,Math.min(sw,sh)*0.3); }
     // Rezerve (dolu değil): turuncu kesikli çerçeve + R
