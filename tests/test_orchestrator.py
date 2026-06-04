@@ -126,6 +126,17 @@ def test_far_from_exit_inverts_to_nearest_entrance():
     assert out["params"]["preference"] == "nearest_entrance"
 
 
+def test_avm_entrance_maps_to_nearest_mall():
+    # REGRESYON: "AVM girişine yakın" otopark girişiyle KARIŞTIRILMAMALI -> nearest_mall
+    spots = _spots_with_free({"C-12"})
+    client = FakeClient(args=None)   # keyword yedeği
+    out = orchestrator.handle_request("AVM girişine yakın bir yer", spots=spots, client=client)
+    assert out["params"]["preference"] == "nearest_mall"
+    # "otopark girişi" ise hâlâ nearest_entrance olmalı (karışmamalı)
+    out2 = orchestrator.handle_request("otopark girişine yakın", spots=spots, client=client)
+    assert out2["params"]["preference"] == "nearest_entrance"
+
+
 def test_quota_error_falls_back_with_note():
     # LLM 429 (kota) verirse: keyword yedeği + cevapta nazik kota notu olmalı
     spots = _spots_with_free({"A-10"})

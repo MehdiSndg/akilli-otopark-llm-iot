@@ -65,6 +65,21 @@ def test_preference_changes_choice():
     assert near_exit["spot_id"] == "E-13"       # araç çıkışına (VEXIT) en yakın
 
 
+def test_nearest_mall_minimizes_walk_not_entrance():
+    # REGRESYON: "AVM girişine yakın" (nearest_mall) AVM YAYA KAPISINA yürümeyi
+    # minimize etmeli; otopark girişine (nearest_entrance) yakınlıkla KARIŞTIRILMAMALI.
+    # B-2 AVM kapısına yakın (yürüme~16), E-2 otopark girişine yakın (sürüş~13).
+    spots = _spots_with_free({"B-2", "E-2"})
+    near_mall = allocator.find_best_parking_spot("normal", "nearest_mall", False,
+                                                 spots=spots, entrance=ENTRANCES[0])
+    near_entrance = allocator.find_best_parking_spot("normal", "nearest_entrance", False,
+                                                     spots=spots, entrance=ENTRANCES[0])
+    assert near_mall["spot_id"] == "B-2"          # AVM yaya kapısına en yakın
+    assert near_entrance["spot_id"] == "E-2"      # otopark girişine en yakın
+    assert near_mall["spot_id"] != near_entrance["spot_id"]   # üç kapı ayrı şeyler
+    assert near_mall["walk_to_mall"] < near_entrance["walk_to_mall"]
+
+
 def test_entrance_changes_choice():
     # E-1 sol-altta, E-24 sağ-altta. Sürücünün girdiği kapı seçimi değiştirmeli.
     spots = _spots_with_free({"E-1", "E-24"})

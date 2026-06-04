@@ -61,20 +61,23 @@ def _ideal_distance(duration_hours):
     return config.ALPHA_DISTANCE_PER_HOUR * duration_hours
 
 
-def _spot_cost(drive, exit_drive, use_exit, explicit_pref, ideal):
+def _spot_cost(drive, exit_drive, mall_walk, preference, ideal):
     """Bir aday yerin maliyeti (küçük = iyi). Tek-araç ve çoklu-araç ortak çekirdeği.
 
-    Öncelik kuralı:
-      - Açık yön tercihi (girişe/çıkışa yakın) BİRİNCİLDİR: o mesafe doğrudan
-        minimize edilir. "girişe yakın" -> giriş kapısından sürüş; "çıkışa yakın"
-        -> en yakın ARAÇ ÇIKIŞINA (VEXIT) sürüş. (AVM yaya kapısı DEĞİL — onlar
-        ayrı; bkz. _best_walk_to_mall.) Süre verilse bile tercih ezilmez.
-      - Tercih "farketmez" + süre verilmişse: sirkülasyon maliyeti |d - ALPHA*t|
-        (kısa kalan kapıya yakın, uzun kalan derine) devreye girer.
+    Öncelik kuralı (üç AYRI kapı; karıştırılmaz):
+      - "girişe yakın" (nearest_entrance) -> otopark GİRİŞİNDEN sürüş (d_i)
+      - "çıkışa yakın" (nearest_exit)     -> en yakın ARAÇ ÇIKIŞINA (VEXIT) sürüş
+      - "AVM'ye yakın" (nearest_mall)     -> en yakın AVM YAYA KAPISINA yürüme
+      Açık yön tercihi BİRİNCİLDİR (süre verilse bile ezilmez).
+      - Tercih "farketmez" + süre verilmişse: sirkülasyon maliyeti |d - ALPHA*t|.
       - Hiçbiri yoksa: girişten sürüş mesafesi (en yakın yer).
     """
-    if explicit_pref:
-        return exit_drive if use_exit else drive
+    if preference == "nearest_exit":
+        return exit_drive
+    if preference == "nearest_mall":
+        return mall_walk
+    if preference == "nearest_entrance":
+        return drive
     if ideal is not None:
         return abs(drive - ideal)
     return drive
@@ -184,8 +187,6 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
     if not candidates:
         return None
 
-    use_exit = (preference == "nearest_exit")
-    explicit_pref = preference in ("nearest_entrance", "nearest_exit")
     ideal = _ideal_distance(duration_hours)               # ALPHA*t ya da None
     best = None
     best_cost = None
@@ -195,7 +196,7 @@ def find_best_parking_spot(vehicle_type="normal", preference="any",
         drive_path, drive = _best_drive(node, entrance)   # d_i: girişten sürüş
         exit_drive = _best_exit(node)                     # en yakın ARAÇ çıkışına sürüş
         walk = _best_walk_to_mall(node)                   # AVM yaya kapısına yürüme
-        cost = _spot_cost(drive, exit_drive, use_exit, explicit_pref, ideal)
+        cost = _spot_cost(drive, exit_drive, walk, preference, ideal)
         if best_cost is None or cost < best_cost:
             best_cost = cost
             best = {
@@ -242,8 +243,6 @@ def _request_cost_row(req, empty, drive_cache, exit_cache, walk_cache):
 
     req_type = _required_type(vt, needs)
     ideal = _ideal_distance(dur)                            # ALPHA*t ya da None
-    use_exit = (pref == "nearest_exit")
-    explicit_pref = pref in ("nearest_entrance", "nearest_exit")
 
     costs, info = [], []
     for s in empty:
@@ -258,7 +257,7 @@ def _request_cost_row(req, empty, drive_cache, exit_cache, walk_cache):
         if node not in walk_cache:
             walk_cache[node] = _best_walk_to_mall(node)     # AVM kapısına yürüme
         walk = walk_cache[node]
-        base = _spot_cost(drive, exit_drive, use_exit, explicit_pref, ideal)
+        base = _spot_cost(drive, exit_drive, walk, pref, ideal)
         type_miss = 0 if s["type"] == req_type else 1
         costs.append(type_miss * TYPE_PENALTY + base)
         info.append((drive_path, round(drive, 2), round(exit_drive, 2), round(walk, 2)))

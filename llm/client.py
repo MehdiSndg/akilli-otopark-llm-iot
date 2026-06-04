@@ -76,7 +76,11 @@ def _build_explain_prompt(user_text, result, params):
     dist = result.get("distance")
 
     # Tercihe göre TEK ve doğru "manşet mesafe" — LLM'in yanlış kapı iddia etmesini önler
-    if pref == "nearest_exit":
+    if pref == "nearest_mall":
+        headline = (f"Sürücü AVM YAYA KAPISINA (mağaza girişi) yakın istedi. Bu yer "
+                    f"AVM kapısına {walk} birim YÜRÜME. SADECE bunu vurgula. "
+                    f"(Otopark araç giriş/çıkışı DEME.)")
+    elif pref == "nearest_exit":
         headline = (f"Sürücü ÇIKIŞA yakın istedi. Bu yer otopark araç çıkışına "
                     f"(ÇIKIŞ kapısı) {exit_d} birim. SADECE bunu vurgula.")
     elif pref == "nearest_entrance":

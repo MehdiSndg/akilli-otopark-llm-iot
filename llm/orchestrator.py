@@ -108,9 +108,14 @@ def _keyword_fallback(user_text):
 
     # "uzak" ifadesi yönü tersine çevirir: çıkışa uzak = girişe yakın (ve tersi)
     far = any(w in t for w in ("uzak", "uzağa", "uzakta"))
+    mentions_mall = any(w in t for w in ("avm", "mağaza", "magaza", "alışveriş",
+                                         "alisveris", "yaya", "içeri", "iceri"))
     mentions_exit = any(w in t for w in ("çıkış", "cikis", "çıkışa"))
     mentions_entrance = any(w in t for w in ("giriş", "giris", "girişe"))
-    if mentions_exit:
+    # AVM/mağaza ifadesi "kapı" sözcüğünü ezer: "AVM girişi" = yaya kapısı, otopark girişi değil
+    if mentions_mall and not far:
+        args["preference"] = "nearest_mall"
+    elif mentions_exit:
         args["preference"] = "nearest_entrance" if far else "nearest_exit"
     elif mentions_entrance:
         args["preference"] = "nearest_exit" if far else "nearest_entrance"
@@ -190,6 +195,9 @@ def _fallback_explanation(result, params):
                     f"bıraktık (girişten ~{dist} birim).")
         return (f"{base}. ~{dur} saatlik kalışınıza göre dengeli bir konum seçtim "
                 f"(girişten ~{dist} birim).")
+    if pref == "nearest_mall":
+        return (f"{base}. AVM yaya kapısına yaklaşık {walk} birim yürüme "
+                f"mesafesinde — mağazaya yakın, az yürürsünüz.")
     if pref == "nearest_exit":
         return (f"{base}. Otopark çıkışına (ÇIKIŞ) yaklaşık {exit_d} birim "
                 f"uzaklıkta — kolay çıkış için ideal.")

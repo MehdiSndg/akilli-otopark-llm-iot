@@ -8,7 +8,8 @@ sağlayıcı değişse de araç tanımı tek yerde kalır.
 
 # Geçerli enum değerleri (doğrulama ve varsayılanlar için)
 VEHICLE_TYPES = ("normal", "disabled", "ev")
-PREFERENCES = ("nearest_entrance", "nearest_exit", "any")
+# Üç AYRI kapıya yakınlık: otopark araç girişi / araç çıkışı / AVM yaya kapısı.
+PREFERENCES = ("nearest_entrance", "nearest_exit", "nearest_mall", "any")
 
 # Parametre eksik/hatalı gelirse düşülecek makul varsayılanlar (G3.4)
 DEFAULTS = {
@@ -35,8 +36,12 @@ TOOL_FIND = {
         "preference": {
             "type": "string",
             "enum": list(PREFERENCES),
-            "description": "Sürücü tercihi: girişe yakın (nearest_entrance), "
-                           "çıkışa yakın (nearest_exit) veya farketmez (any).",
+            "description": "Sürücü hangi KAPIYA yakın istiyor (üçü AYRI yerdir): "
+                           "otopark/araç GİRİŞİ (nearest_entrance); otopark/araç "
+                           "ÇIKIŞI, hızlı çıkış (nearest_exit); AVM yaya kapısı / "
+                           "mağaza girişi / alışveriş merkezine yakın, az yürüme "
+                           "(nearest_mall); farketmez (any). DİKKAT: 'AVM girişi' "
+                           "otopark girişi DEĞİLDİR -> nearest_mall.",
         },
         "needs_charging": {
             "type": "boolean",
@@ -113,7 +118,13 @@ SYSTEM_PROMPT = (
     "gün\") duration_hours'ı saate çevir; belirtilmezse boş bırak. "
     "Sürücü BELİRLİ bir park yeri söylerse (ör. \"D-34'e koy\", \"A-7 olsun\") "
     "spot_id'yi o yerin kimliğiyle doldur (ör. \"D-34\"). "
-    "Tercih yalnızca yakınlık ifade eder; sürücü bir noktadan UZAK olmak isterse "
-    "diğerine yakını seç: \"çıkışa uzak\" -> nearest_entrance, \"girişe uzak\" -> "
-    "nearest_exit. Türkçe ya da İngilizce — sürücü hangi dilde yazarsa o dilde anla."
+    "TERCİH (preference) ÜÇ AYRI KAPIYI ayırt eder:\n"
+    "- 'otopark girişi / araç girişi / girişe yakın' -> nearest_entrance\n"
+    "- 'otopark çıkışı / araç çıkışı / çıkışa yakın / hızlı çıkmak' -> nearest_exit\n"
+    "- 'AVM girişi / AVM kapısı / mağazaya yakın / alışveriş merkezine yakın / "
+    "az yürümek / yaya kapısı' -> nearest_mall\n"
+    "ÇOK ÖNEMLİ: 'AVM girişi' otopark girişi DEĞİLDİR; nearest_mall kullan. "
+    "Tercih yakınlık ifade eder; bir noktadan UZAK isteniyorsa diğerine yakını seç: "
+    "\"çıkışa uzak\" -> nearest_entrance, \"girişe uzak\" -> nearest_exit. "
+    "Türkçe ya da İngilizce — sürücü hangi dilde yazarsa o dilde anla."
 )
