@@ -46,6 +46,12 @@ SIM_INTERVAL_SEC = 1.0         # Her tur arası bekleme (saniye)
 SIM_CHANGES_PER_TICK = 2       # (geriye dönük) tur başına temel değişim sayısı
 DAY_LENGTH_SEC = 240           # Bir simüle günün gerçek saniye süresi (demo: 4 dk/gün)
 
+# Asgari park süresi: bir araç park edince en az bu kadar tur DOLU kalır; taze park
+# edilmiş yer boşaltılamaz. Gerçekçilik için (araç gelir gelmez çıkmaz) ve görsel
+# tutarlılık için (animasyon ~8 sn; yer hemen boşalırsa araç "park eder etmez çıkar").
+# Tur ~1 sn; DAY_LENGTH_SEC=240'ta 25 tur ≈ 2.5 simüle saat.
+MIN_DWELL_TICKS = 25
+
 
 # ---------------------------------------------------------------------------
 # Kalış süresine göre yerleştirme — Maliyet Fonksiyonu (turnover optimizasyonu)

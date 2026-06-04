@@ -328,12 +328,14 @@ function drawSpots(now){
     if(vocc[s.id]){ drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw); }
     else if(s.type==="ev_charging"){ ctx.strokeStyle=C.ev;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); bolt(cx,cy,Math.min(sw,sh)*0.32); }
     else if(s.type==="disabled"){ ctx.strokeStyle=C.disabled;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); wheelchair(cx,cy,Math.min(sw,sh)*0.3); }
-    // Rezerve (dolu değil): turuncu kesikli çerçeve + R
-    if(reservedMap[s.id] && !vocc[s.id]){
+    // Rezerve (dolu değil): turuncu kesikli çerçeve + geri sayım (tıklayınca iptal)
+    if(reservedMap[s.id]!=null && !vocc[s.id]){
       ctx.setLineDash([4,3]); ctx.strokeStyle=C.exit; ctx.lineWidth=2;
       rr(x-1,y-1,sw+2,sh+2,3); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle=C.exit; ctx.font=`700 ${Math.max(sh*0.5,8)}px sans-serif`; ctx.textAlign="center";
-      ctx.fillText("R", cx, cy+sh*0.18);
+      const rem=reservedMap[s.id], lbl = rem>=60 ? Math.ceil(rem/60)+"'" : rem+"";
+      ctx.fillStyle=C.exit; ctx.font=`700 ${Math.max(sh*0.44,8)}px "Segoe UI",sans-serif`;
+      ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText(lbl, cx, cy); ctx.textBaseline="alphabetic";
     }
     // Anomali (arızalı/çevrimdışı sensör): kırmızı uyarı halkası
     if(anomalySpots[s.id]){ ctx.strokeStyle="rgba(239,138,142,0.95)"; ctx.lineWidth=2;
@@ -520,6 +522,24 @@ function addReserveButton(spotId){
     }catch(e){ b.disabled=false; bubble("system","Rezervasyon hatası: "+e.message); }
   };
   chatEl.appendChild(b); chatEl.scrollTop=chatEl.scrollHeight;
+}
+// Rezerve yere TIKLAYINCA iptal (üstünde geri sayım gösterilir)
+canvas.addEventListener("click",(e)=>{
+  if(!L||!T) return;
+  const r=canvas.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;  // CSS px (S de CSS px)
+  const hw=Math.max(T.scale*0.84,5), hh=Math.max(T.scale*1.4,9);
+  for(const s of L.spots){
+    if(reservedMap[s.id]==null || vocc[s.id]) continue;
+    const [cx,cy]=S(s.x,s.y);
+    if(Math.abs(mx-cx)<=hw && Math.abs(my-cy)<=hh){ cancelReservation(s.id); break; }
+  }
+});
+async function cancelReservation(id){
+  try{
+    await fetch("/api/cancel_reservation",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({spot_id:id})});
+    bubble("info",`${id} rezervasyonu iptal edildi.`);
+  }catch(e){ bubble("system","İptal hatası: "+e.message); }
 }
 
 /* ---------- IoT sistem durumu (ağ geçidi + sensör filosu + anomali) ---------- */

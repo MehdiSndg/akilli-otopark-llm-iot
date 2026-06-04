@@ -105,9 +105,12 @@ def _layout_payload():
 def _state_payload():
     spots = parking_state.get_state()
     occupancy = {s["id"]: s["occupied"] for s in spots}
-    reserved = {s["id"]: s["reserved"] for s in spots if s.get("reserved")}
+    # Rezerve yerler: id -> KALAN saniye (UI'da geri sayım gösterir)
+    now = time.time()
+    with _RES_LOCK:
+        reserved = {sid: max(0, int(exp - now)) for sid, exp in _RESERVATIONS.items()}
     occ = sum(1 for v in occupancy.values() if v)
-    res = sum(1 for s in spots if s.get("reserved") and not s["occupied"])
+    res = len(reserved)
     total = len(spots)
     sim = sensor_simulator.SIM_STATE
     anom = anomaly.detect()

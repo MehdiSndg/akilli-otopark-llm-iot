@@ -48,6 +48,10 @@ SIM_STATE = {"hour": _OFFSET_HOURS, "busy": "Orta", "target": 0.0}
 # confirmed: edge'in "gerçek" sayıp yayınladığı doluluk değişimi sayısı
 EDGE_STATS = {"filtered": 0, "confirmed": 0}
 
+# Asgari park süresi takibi: bir araç park edince en az MIN_DWELL_TICKS tur kalır.
+_TICK = 0
+_OCC_SINCE = {}        # sid -> dolduğu tur (yaş hesabı için); boşalınca silinir
+
 
 def sim_hour():
     """0..24 arası simüle saat (şu an)."""
@@ -104,6 +108,27 @@ def _weighted_pick(pool, k):
     w = _desir()
     return sorted(pool, key=lambda s: random.random() ** (1.0 / max(w.get(s, 1e-9), 1e-9)),
                   reverse=True)[:k]
+
+
+def _occupy(raw, sid):
+    """Bir yeri doldur ve park başlangıç turunu işaretle (asgari süre takibi)."""
+    raw[sid] = True
+    _OCC_SINCE[sid] = _TICK
+
+
+def _vacate(raw, sid):
+    """Bir yeri boşalt ve park kaydını sil."""
+    raw[sid] = False
+    _OCC_SINCE.pop(sid, None)
+
+
+def _vacatable(occupied):
+    """Boşaltılabilir yerler: YALNIZCA en az MIN_DWELL_TICKS turdur dolu olanlar.
+
+    Hiç uygun yer yoksa BOŞ döner -> o tur hiçbir yer boşaltılmaz (doluluk birkaç
+    tur hedefin biraz üstünde kalır; görünmez). Böylece taze park edilmiş bir yer
+    ASLA boşaltılmaz -> 'araç park eder etmez çıkar' (kısa park) imkânsız olur."""
+    return [s for s in occupied if _TICK - _OCC_SINCE.get(s, -10**9) >= config.MIN_DWELL_TICKS]
 
 
 def occupancy_target(hour):
@@ -171,13 +196,15 @@ class EdgeFilter:
 
 def _tick(raw, spot_ids, efilter, publish):
     """Bir adım: ham doluluğu hedefe yaklaştır, gürültü bindir, edge'de filtrele."""
+    global _TICK
+    _TICK += 1
     hour = sim_hour()
     target = occupancy_target(hour)
     SIM_STATE.update(hour=hour, target=target, busy=busy_label(target))
 
-    # 1) Gerçek değişiklikler -> ham duruma uygula (doldurma kapıya yakınlığa göre
-    #    AĞIRLIKLI; boşalma rastgele). Doldurma HIZI değişmez (ek araç/devir yok).
-    #    REZERVE yerler doldurulmaz -> rezerve yere başka araç park edemez.
+    # 1) Gerçek değişiklikler -> ham duruma uygula. Doldurma kapıya yakınlığa göre
+    #    AĞIRLIKLI; boşaltma yalnızca ASGARİ park süresini doldurmuş yerlerden (araç
+    #    park eder etmez çıkmaz). REZERVE yerler doldurulmaz. Doldurma HIZI değişmez.
     reserved = database.get_reserved_ids()
     target_count = int(target * len(spot_ids))
     current = sum(1 for v in raw.values() if v)
@@ -186,20 +213,21 @@ def _tick(raw, spot_ids, efilter, publish):
     if diff > 0:
         empties = [s for s in spot_ids if not raw[s] and s not in reserved]
         for sid in _weighted_pick(empties, min(n, len(empties))):
-            raw[sid] = True
+            _occupy(raw, sid)
     elif diff < 0:
-        occupied = [s for s in spot_ids if raw[s]]
-        for sid in random.sample(occupied, min(n, len(occupied))):
-            raw[sid] = False
+        pool = _vacatable([s for s in spot_ids if raw[s]])
+        for sid in random.sample(pool, min(n, len(pool))):
+            _vacate(raw, sid)
     else:
-        # hedefteyiz: hafif dalgalanma (1 flip). Boşalma rastgele, dolma tercihli (rezerve hariç).
-        sid = random.choice(spot_ids)
-        if raw[sid]:
-            raw[sid] = False
+        # hedefteyiz: hafif dalgalanma (1 flip). Boşaltma asgari süreli, dolma tercihli.
+        if random.random() < 0.5:
+            pool = _vacatable([s for s in spot_ids if raw[s]])
+            if pool:
+                _vacate(raw, random.choice(pool))
         else:
             pick = _weighted_pick([s for s in spot_ids if not raw[s] and s not in reserved], 1)
             if pick:
-                raw[pick[0]] = True
+                _occupy(raw, pick[0])
 
     # 2) Geçici gürültü (pass-by): yalnız BU turun okumasına kısa "dolu" sıçraması
     reading = dict(raw)
@@ -319,6 +347,10 @@ def run_simulator(stop_event=None, interval=None, changes_per_tick=None):
     interval = config.SIM_INTERVAL_SEC if interval is None else interval
     raw = _initial_state()
     spot_ids = list(raw.keys())
+    # Başta dolu yerler "zaten park etmiş" sayılır -> asgari süreyi geçmiş, hemen boşaltılabilir
+    global _TICK, _OCC_SINCE
+    _TICK = 0
+    _OCC_SINCE = {sid: -config.MIN_DWELL_TICKS for sid, occ in raw.items() if occ}
     efilter = EdgeFilter(raw, config.EDGE_DEBOUNCE_TICKS)
     health = _init_health(spot_ids)
 
