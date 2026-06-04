@@ -268,13 +268,24 @@ function drawRoads() {
   ctx.setLineDash([]);
 }
 function drawSections() {
-  ctx.textAlign="left";
-  ctx.font=`700 ${Math.max(T.scale*1.0,13)}px "Segoe UI",sans-serif`;
+  // Yalnızca çok hafif bölüm çerçevesi (spotların altında kalır, sorun değil).
   for(const sec of L.sections){
     const [x0,y0]=S(sec.x0,sec.y0), [x1,y1]=S(sec.x1,sec.y1);
-    ctx.strokeStyle="rgba(255,255,255,0.05)"; ctx.lineWidth=1; rr(x0,y0,x1-x0,y1-y0,6); ctx.stroke();
-    ctx.fillStyle="rgba(230,234,242,0.5)"; ctx.fillText(sec.label, x0+4, (y0+y1)/2+5);
+    ctx.strokeStyle="rgba(255,255,255,0.04)"; ctx.lineWidth=1; rr(x0,y0,x1-x0,y1-y0,6); ctx.stroke();
   }
+}
+// Bölüm harfleri (A–E): spotların ÜSTÜNE, her bandın SOLUNDAKİ boşluğa, küçük + şeffaf.
+// Böylece park yerlerini kapatmadan hangi blokta olduğun net görünür.
+function drawSectionLabels() {
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.font=`700 ${Math.max(T.scale*1.7,15)}px "Segoe UI",sans-serif`;
+  for(const sec of L.sections){
+    const mx=(L.bounds.min_x + sec.x0)/2;           // sol kenar boşluğunun ortası
+    const [lx,ly]=S(mx, (sec.y0+sec.y1)/2);
+    ctx.fillStyle="rgba(214,222,236,0.38)";          // şeffaf, dikkat dağıtmaz
+    ctx.fillText(sec.label, lx, ly);
+  }
+  ctx.textBaseline="alphabetic";
 }
 function drawIslands() {
   for(const il of L.islands){
@@ -390,6 +401,7 @@ function frame(now){
   drawSections();
   drawIslands();
   drawSpots(now);
+  drawSectionLabels();           // bölüm harfleri spotların üstüne (sol boşlukta)
   for(const c of cars) c.draw(tl,tw);
   drawRoute();
   drawGates();
