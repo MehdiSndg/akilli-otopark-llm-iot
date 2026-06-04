@@ -9,6 +9,8 @@ Sensör olayları (events) ve periyodik doluluk örnekleri (occupancy_samples)
   - heatmap       : park yeri başına kullanım sıklığı (ısı haritası)
 """
 
+import time
+
 import config
 from backend import database, parking_state
 
@@ -52,19 +54,50 @@ def section_occupancy(spots=None):
     return out
 
 
-def heatmap(events=None):
-    """Park yeri başına kullanım sıklığı: kaç kez doldu (ısı haritası yoğunluğu)."""
+def heatmap(events=None, spots=None):
+    """Park yeri başına DOLULUK YOĞUNLUĞU: kaydedilen süre boyunca her yerin dolu
+    KALDIĞI zaman oranı (0..1). "Hangi yerler sürekli dolu" sorusunu yanıtlar —
+    gerçek ısı haritası budur (kullanım SAYISI düşük devirde gradyan göstermez).
+
+    Olaylardan (occupy/free) dolu süre toplanır; bir yerin ilk olayından önceki
+    durumu, olayın TERSİ kabul edilir (olay bir DEĞİŞİMİ işaretler). Hiç olayı
+    olmayan yer mevcut durumuyla (tüm pencere boyunca dolu/boş) sayılır."""
     events = events if events is not None else database.get_events()
-    usage = {}
+    spots = spots if spots is not None else parking_state.get_state()
+    cur = {s["id"]: s["occupied"] for s in spots}
+    now = time.time()
+    by_spot = {}
     for e in events:
-        if e["occupied"]:
-            usage[e["spot_id"]] = usage.get(e["spot_id"], 0) + 1
-    return usage
+        by_spot.setdefault(e["spot_id"], []).append(e)
+    window_start = min((e["ts"] for e in events), default=now)
+    span = max(1e-6, now - window_start)
+    rate = {}
+    for sid, occ_now in cur.items():
+        evs = by_spot.get(sid)
+        if not evs:
+            rate[sid] = 1.0 if occ_now else 0.0
+            continue
+        state = not bool(evs[0]["occupied"])          # ilk olaydan önceki durum = olayın tersi
+        t, occ = window_start, 0.0
+        for e in evs:
+            if state:
+                occ += e["ts"] - t
+            state = bool(e["occupied"]); t = e["ts"]
+        if state:
+            occ += now - t
+        rate[sid] = max(0.0, min(1.0, occ / span))
+    return rate
 
 
 def timeseries(limit=180):
-    """Doluluk zaman serisi: [{ts, occupied, total}] (çizgi grafik için)."""
-    return database.get_samples(limit)
+    """Doluluk zaman serisi: [{ts, occupied, total, hour}] (çizgi grafik için).
+
+    hour = örneğin alındığı simüle saat (0..24); grafik ekseninde 'saat dilimi' için."""
+    from simulator import sensor_simulator
+    out = database.get_samples(limit)
+    for s in out:
+        s["hour"] = round(sensor_simulator.sim_hour_at(s["ts"]), 3)
+    return out
 
 
 def summary():

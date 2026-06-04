@@ -50,9 +50,60 @@ EDGE_STATS = {"filtered": 0, "confirmed": 0}
 
 
 def sim_hour():
-    """0..24 arası simüle saat."""
+    """0..24 arası simüle saat (şu an)."""
     elapsed = time.time() - _START
     return (_OFFSET_HOURS + elapsed / config.DAY_LENGTH_SEC * 24.0) % 24.0
+
+
+def sim_hour_at(ts):
+    """Belirli bir gerçek-zaman damgası (ts) için simüle saat (0..24).
+
+    Analitik zaman grafiğinin x eksenine 'saat dilimi' koymak için kullanılır."""
+    return (_OFFSET_HOURS + (ts - _START) / config.DAY_LENGTH_SEC * 24.0) % 24.0
+
+
+# ---------------------------------------------------------------------------
+# Gerçekçi park tercihi (doluluk dağılımı)
+# ---------------------------------------------------------------------------
+# Sürücüler rastgele park etmez: AVM yaya kapısına yakın yerler daha çok tercih
+# edilir. Bu nedenle doluluk doldurulurken yerler, kapıya yakınlığa göre AĞIRLIKLI
+# (ama YUMUŞAK -> yığılma yok) seçilir. Sonuç: ön taraf daha yoğun, arka daha seyrek,
+# yumuşak bir gradyan. Doldurma HIZI değişmez (ek araç/devir yok); yalnız HANGİ yerin
+# seçildiği değişir. Isı haritası (kullanım sıklığı) artık bu GERÇEK davranışı yansıtır.
+_DESIR = None
+
+
+def _build_desirability():
+    """spot_id -> tercih ağırlığı (kapıya yakın = yüksek). Yumuşak gradyan."""
+    from algorithm.graph import EXITS
+    spots, graph = build_parking()
+    doors = [graph.position(n) for n in EXITS]
+    dist = {s.id: min(((s.x - dx) ** 2 + (s.y - dy) ** 2) ** 0.5 for dx, dy in doors)
+            for s in spots}
+    dmin, dmax = min(dist.values()), max(dist.values())
+    scale = max(1.0, (dmax - dmin) / 2.0)         # en uzak ~e^-2 ≈ 0.14 ağırlık (yumuşak)
+    return {sid: math.exp(-(d - dmin) / scale) for sid, d in dist.items()}
+
+
+def _desir():
+    global _DESIR
+    if _DESIR is None:
+        _DESIR = _build_desirability()
+    return _DESIR
+
+
+def _weighted_pick(pool, k):
+    """Tercihe göre ağırlıklı, tekrarsız k seçim (Efraimidis-Spirakis ağırlıklı örnekleme).
+
+    Kapıya yakın yerler daha sık seçilir, ama uzaklar da seçilebilir (yumuşak) ->
+    gerçekçi doluluk, yığılma yok."""
+    if k <= 0:
+        return []
+    if k >= len(pool):
+        return list(pool)
+    w = _desir()
+    return sorted(pool, key=lambda s: random.random() ** (1.0 / max(w.get(s, 1e-9), 1e-9)),
+                  reverse=True)[:k]
 
 
 def occupancy_target(hour):
@@ -73,11 +124,11 @@ def busy_label(target):
 
 
 def _initial_state():
-    """Başlangıç doluluğu: o anki saatin hedef oranına göre rastgele dağıt."""
+    """Başlangıç doluluğu: o anki saatin hedef oranına göre, kapıya yakınlığa göre dağıt."""
     spots, _ = build_parking()
     ids = [s.id for s in spots]
     k = int(occupancy_target(sim_hour()) * len(ids))
-    occupied = set(random.sample(ids, k))
+    occupied = set(_weighted_pick(ids, k))        # kapıya yakın yerler daha dolu (gerçekçi)
     return {sid: (sid in occupied) for sid in ids}
 
 
@@ -124,22 +175,28 @@ def _tick(raw, spot_ids, efilter, publish):
     target = occupancy_target(hour)
     SIM_STATE.update(hour=hour, target=target, busy=busy_label(target))
 
-    # 1) Gerçek değişiklikler -> ham duruma uygula (kalıcı; araçlar gelir/gider)
+    # 1) Gerçek değişiklikler -> ham duruma uygula (doldurma kapıya yakınlığa göre
+    #    AĞIRLIKLI; boşalma rastgele). Doldurma HIZI değişmez (ek araç/devir yok).
     target_count = int(target * len(spot_ids))
     current = sum(1 for v in raw.values() if v)
     diff = target_count - current
     n = min(abs(diff), 6)
     if diff > 0:
         empties = [s for s in spot_ids if not raw[s]]
-        for sid in random.sample(empties, min(n, len(empties))):
+        for sid in _weighted_pick(empties, min(n, len(empties))):
             raw[sid] = True
     elif diff < 0:
         occupied = [s for s in spot_ids if raw[s]]
         for sid in random.sample(occupied, min(n, len(occupied))):
             raw[sid] = False
     else:
+        # hedefteyiz: hafif dalgalanma (1 flip). Boşalma rastgele, dolma tercihli.
         sid = random.choice(spot_ids)
-        raw[sid] = not raw[sid]
+        if raw[sid]:
+            raw[sid] = False
+        else:
+            pick = _weighted_pick([s for s in spot_ids if not raw[s]], 1)
+            raw[pick[0] if pick else sid] = True
 
     # 2) Geçici gürültü (pass-by): yalnız BU turun okumasına kısa "dolu" sıçraması
     reading = dict(raw)

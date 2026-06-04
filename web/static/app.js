@@ -320,8 +320,7 @@ function drawSpots(now){
     const [cx,cy]=S(s.x,s.y), x=cx-sw/2, y=cy-sh/2, upper=s.face==="up";
     // Isı haritası modu: TÜM yerler kullanım sıklığına göre boyanır (araç gizlenir -> saf ısı haritası)
     if(heatmapOn){
-      const used=heatData[s.id]||0;
-      ctx.fillStyle = used>0 ? heatColor(used) : "rgba(74,84,104,0.5)";
+      ctx.fillStyle = heatColor(heatData[s.id]||0);   // dolu kalma oranı: soğuk(az) -> sıcak(çok)
       rr(x,y,sw,sh,2); ctx.fill();
       if(routes.some(r=>r.spotId===s.id)){ ctx.strokeStyle=`rgba(245,200,70,${0.5+0.5*pulse})`; ctx.lineWidth=3; rr(x-4,y-4,sw+8,sh+8,5); ctx.stroke(); }
       continue;
@@ -628,10 +627,17 @@ function drawTimeChart(ts){
   c.fillStyle="#6cb8ee"; c.beginPath(); c.arc(lx,ly,3.5,0,7); c.fill();
   c.fillStyle="#e6eaf2"; c.font="700 11px 'Segoe UI',sans-serif"; c.textAlign="right"; c.textBaseline="bottom";
   c.fillText(Math.round(last.occupied/total*100)+"% ("+last.occupied+")", lx-3, ly-5);
-  // x ekseni: eski -> şimdi
-  c.fillStyle="rgba(170,178,196,0.6)"; c.font="10px 'Segoe UI',sans-serif"; c.textBaseline="top";
-  c.textAlign="left"; c.fillText("← eski", x0, y1+4);
-  c.textAlign="right"; c.fillText("şimdi", x1, y1+4);
+  // x ekseni: simüle SAAT dilimleri (08:00, 14:00 ...)
+  c.fillStyle="rgba(170,178,196,0.75)"; c.font="10px 'Segoe UI',sans-serif"; c.textBaseline="top";
+  const nLab=Math.min(6, n);
+  for(let t=0; t<nLab; t++){
+    const i=Math.round((n-1)*t/(nLab-1)), h=ts[i].hour;
+    if(h==null) continue;
+    const X=px(i), hh=String(Math.floor(h)).padStart(2,"0"), mm=String(Math.floor((h%1)*60)).padStart(2,"0");
+    c.strokeStyle="rgba(255,255,255,0.08)"; c.beginPath(); c.moveTo(X,y1); c.lineTo(X,y1+3); c.stroke();
+    c.textAlign = t===0?"left":(t===nLab-1?"right":"center");
+    c.fillText(`${hh}:${mm}`, X, y1+5);
+  }
 }
 function levelColor(rate){ return rate>=0.7 ? "#e2685a" : (rate>=0.4 ? "#f5c846" : "#6cd08a"); }
 function drawSectionChart(secs){
@@ -662,8 +668,9 @@ heatBtn.onclick=async ()=>{
   heatmapOn=!heatmapOn; heatBtn.classList.toggle("on", heatmapOn);
   if(heatmapOn){
     try{ const a=await (await fetch("/api/analytics")).json();
-      heatData=a.heatmap||{}; heatMax=Math.max(1, ...Object.values(heatData));
-      if(heatMaxEl) heatMaxEl.textContent=`çok (${heatMax}×)`;
+      heatData=a.heatmap||{};
+      heatMax=Math.max(0.01, ...Object.values(heatData));   // oran (0..1); kontrast için max'a göre normalize
+      if(heatMaxEl) heatMaxEl.textContent=`çok (%${Math.round(heatMax*100)})`;
       if(heatLegend) heatLegend.hidden=false;
     }
     catch(e){ heatmapOn=false; heatBtn.classList.remove("on"); }
