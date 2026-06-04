@@ -146,6 +146,11 @@ class GeminiClient(LLMClient):
             tools=[self._tool],
             # Aracı biz çalıştıracağız; otomatik çağrıyı kapat
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            # mode=ANY: model DÜZ METİN dönemez, MUTLAKA 3 araçtan birini çağırır.
+            # Her sürücü girdisi zaten bir araca karşılık geldiğinden bu doğru ve
+            # bazı modellerin (3.5-flash, lite) ara sıra çağrı yapmamasını önler.
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="ANY")),
         )
         resp = _retry_transient(lambda: self._client.models.generate_content(
             model=self._model, contents=user_text, config=cfg,
