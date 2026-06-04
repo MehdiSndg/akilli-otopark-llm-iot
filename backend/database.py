@@ -252,6 +252,16 @@ def set_occupied(spot_id, occupied):
         conn.close()
 
 
+def get_reserved_ids():
+    """Şu an rezerve olan park yerlerinin id kümesi (simülatör bunları doldurmaz)."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT id FROM spots WHERE reserved = 1").fetchall()
+        return {r["id"] for r in rows}
+    finally:
+        conn.close()
+
+
 def set_reserved(spot_id, reserved):
     """Rezervasyon bayrağını ayarla. (toplam etkilenen satır)."""
     conn = _connect()

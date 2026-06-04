@@ -513,8 +513,9 @@ function addReserveButton(spotId){
       const r=await fetch("/api/reserve",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({spot_id:spotId})});
       const d=await r.json();
-      if(d.ok){ b.textContent=`✓ ${spotId} ayrıldı (${d.timeout_sec|0}sn)`;
-        bubble("info",`${spotId} sizin için rezerve edildi. ${d.timeout_sec|0} sn içinde gelmezseniz serbest bırakılır.`); }
+      if(d.ok){ const dk=Math.round((d.timeout_sec||0)/60);
+        b.textContent=`✓ ${spotId} ayrıldı (~${dk} dk)`;
+        bubble("info",`${spotId} sizin için ~${dk} dk rezerve edildi; bu süre boyunca başka araç park edemez.`); }
       else { b.disabled=false; bubble("info","Ayrılamadı: "+d.reason); }
     }catch(e){ b.disabled=false; bubble("system","Rezervasyon hatası: "+e.message); }
   };

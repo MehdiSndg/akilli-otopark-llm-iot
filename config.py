@@ -113,7 +113,7 @@ LOW_BATTERY_THRESHOLD = 20.0       # bu yüzdenin altı "düşük pil" uyarısı
 SENSOR_OFFLINE_AFTER_SEC = 30.0    # bu süre telemetri gelmezse sensör "çevrimdışı" sayılır
 
 # Anomali eşikleri
-RESERVATION_TIMEOUT_SEC = 90.0     # rezervasyon bu süre içinde dolmazsa otomatik düşer
+RESERVATION_TIMEOUT_SEC = 300.0    # rezervasyon bu süre (5 dk) içinde dolmazsa otomatik düşer
 
 # Analitik / örnekleme
 SAMPLE_EVERY = 3                   # kaç simülatör turunda bir toplam doluluk örneği kaydedilir

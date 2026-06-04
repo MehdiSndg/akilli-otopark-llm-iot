@@ -177,12 +177,14 @@ def _tick(raw, spot_ids, efilter, publish):
 
     # 1) Gerçek değişiklikler -> ham duruma uygula (doldurma kapıya yakınlığa göre
     #    AĞIRLIKLI; boşalma rastgele). Doldurma HIZI değişmez (ek araç/devir yok).
+    #    REZERVE yerler doldurulmaz -> rezerve yere başka araç park edemez.
+    reserved = database.get_reserved_ids()
     target_count = int(target * len(spot_ids))
     current = sum(1 for v in raw.values() if v)
     diff = target_count - current
     n = min(abs(diff), 6)
     if diff > 0:
-        empties = [s for s in spot_ids if not raw[s]]
+        empties = [s for s in spot_ids if not raw[s] and s not in reserved]
         for sid in _weighted_pick(empties, min(n, len(empties))):
             raw[sid] = True
     elif diff < 0:
@@ -190,13 +192,14 @@ def _tick(raw, spot_ids, efilter, publish):
         for sid in random.sample(occupied, min(n, len(occupied))):
             raw[sid] = False
     else:
-        # hedefteyiz: hafif dalgalanma (1 flip). Boşalma rastgele, dolma tercihli.
+        # hedefteyiz: hafif dalgalanma (1 flip). Boşalma rastgele, dolma tercihli (rezerve hariç).
         sid = random.choice(spot_ids)
         if raw[sid]:
             raw[sid] = False
         else:
-            pick = _weighted_pick([s for s in spot_ids if not raw[s]], 1)
-            raw[pick[0] if pick else sid] = True
+            pick = _weighted_pick([s for s in spot_ids if not raw[s] and s not in reserved], 1)
+            if pick:
+                raw[pick[0]] = True
 
     # 2) Geçici gürültü (pass-by): yalnız BU turun okumasına kısa "dolu" sıçraması
     reading = dict(raw)
