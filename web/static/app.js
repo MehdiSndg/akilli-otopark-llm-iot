@@ -23,11 +23,11 @@ const HERO_COLORS = ["#f5c846","#5ec2f0","#f08a5e","#9d7cf0","#5ef0a8"];
 let reservedMap = {};   // spot_id -> true (rezerve, dolu değil)
 let anomalySpots = {};  // spot_id -> true (arızalı/çevrimdışı sensör — haritada işaretli)
 let heatmapOn = false, heatData = {}, heatMax = 1;   // ısı haritası (kullanım sıklığı)
-let vocc = {};          // görsel doluluk (animasyon gecikmeli)
-let prevOcc = null;     // bir önceki gerçek doluluk (fark hesaplamak için)
+let vocc = {};          // görsel doluluk (çizilen, animasyon gecikmeli)
+let targetOcc = {};     // DB doluluk (WS'ten gelen hedef) — vocc buna uzlaştırılır
+let mover = {};         // spot_id -> 'in'|'out' : o yer için animasyonu süren tek araç
+let prevOcc = null;     // baz kare kontrolü (ilk/yeniden bağlanma)
 let cars = [];          // gerçek olaylarla tetiklenen hareketli araçlar
-let fades = {};         // spot_id -> {dir:+1 beliriş / -1 sönüş, t0} (animasyon slotu doluysa yumuşak geçiş)
-let arriving = {};      // spot_id -> true: o yere giden (animasyonu süren) araç var -> üst üste park engellenir
 let spotById = {};
 let entranceId = null;
 let aisleIds = [], entranceIds = [], vexitIds = [];
@@ -112,8 +112,8 @@ function rand(arr){ return arr[(Math.random()*arr.length)|0]; }
    Bir yer dolunca -> araç girişten gelip park eder; boşalınca -> çıkışa gider.
    Her hareket gerçek bir sensör (MQTT) olayına karşılık gelir. */
 class EventCar {
-  constructor(pts, onArrive){
-    this.pts=pts; this.onArrive=onArrive||null; this._fired=false;
+  constructor(pts, onArrive, isArr){
+    this.pts=pts; this.onArrive=onArrive||null; this._fired=false; this.isArr=!!isArr;
     this.seg=0; this.t=0; this.done=false;
     this.speed=2.4+Math.random()*0.9; this.ang=0;   // gerçekçi, yavaş otopark hızı (takip edilebilir)
     this.color=rand(CARS); this.off=0.4;   // sağ şerit: kesikli çizginin hemen sağı
@@ -138,7 +138,7 @@ class EventCar {
     const pa=this.pts[this.seg], pb=this.pts[Math.min(this.seg+1,this.pts.length-1)];
     this.px=lerp(pa[0],pb[0],this.t); this.py=lerp(pa[1],pb[1],this.t);
     // Hedefe vardıysa VEYA güvenlik ömrü dolduysa tamamla -> kalıcı sıkışma/yığılma olmaz
-    if(this.seg>=this.pts.length-1 || this.life>16) this._finish();
+    if(this.seg>=this.pts.length-1 || this.life>45) this._finish();
   }
   draw(len,wid){
     const a=this.pts[this.seg], b=this.pts[Math.min(this.seg+1,this.pts.length-1)];
@@ -146,53 +146,48 @@ class EventCar {
     const dx=b[0]-a[0], dy=b[1]-a[1], pl=Math.hypot(dx,dy)||1;
     // Sağ şeritte git; park manevrasında (yere giriş/çıkış) merkeze yumuşak geç
     let off=this.off;
-    if(this.onArrive){ if(this.seg===this.pts.length-2) off*=(1-this.t); }  // varış: yere girerken merkeze
+    if(this.isArr){ if(this.seg===this.pts.length-2) off*=(1-this.t); }     // varış: yere girerken merkeze
     else { if(this.seg===0) off*=this.t; }                                  // ayrılış: yerden çıkarken merkezden
     x += (-dy/pl)*off; y += (dx/pl)*off;   // (-dy,dx) = gidiş yönünün sağı
     const [sx,sy]=S(x,y); drawCar(sx,sy,this.ang,this.color,len,wid);
   }
 }
 // Aynı anda EKRANDA hareket eden araç sınırı (slot) — otopark doluluğuyla İLGİSİ YOK.
-// Yüksek tutulur ki HER giriş/çıkış gerçekten sürerek olsun; araç ne pat diye belirir
-// ne pat diye silinir. Tüm 240 yer erişilebilir (yol her zaman bulunur), bu yüzden fade
-// pratikte hiç tetiklenmez; yalnız teorik bir emniyet sübabıdır. (Deadlock imkânsız:
-// applyTraffic min hız 0.15 + life>16 emniyeti; perf: ~100 sprite Canvas için sorunsuz.)
+// Tüm 240 yer erişilebilir (yol her zaman bulunur) ve devir düşük olduğundan bu sınıra
+// pratikte ulaşılmaz; yalnız teorik emniyet. (Deadlock imkânsız: applyTraffic min hız
+// 0.15 + life>45 emniyeti.)
 const MAX_CARS = 250;
-const FADE_MS = 450;
-function fadeIn(id){  vocc[id]=true;  fades[id]={dir:1,  t0:performance.now()}; }  // yumuşak beliriş
-function fadeOut(id){ vocc[id]=false; fades[id]={dir:-1, t0:performance.now()}; }  // yumuşak sönüş
-// Bir yerin park aracı çizim alfası: fade varsa rampalanır, yoksa doluluk durumu (0/1)
-function carAlpha(id, now){
-  const f=fades[id];
-  if(!f) return vocc[id]?1:0;
-  const k=(now-f.t0)/FADE_MS;
-  if(k>=1){ delete fades[id]; return vocc[id]?1:0; }
-  return f.dir>0 ? k : (1-k);
+
+// --- UZLAŞTIRMA (reconcile) modeli: HAYALET ARAÇ YOK ---
+// Görsel doluluk (vocc) DB hedefine (targetOcc) uzlaştırılır. Bir yer için AYNI ANDA
+// en çok BİR araç animasyonu olur (mover[id]). Hedef, araç yoldayken değişirse araç
+// hedefe varıp İŞİNİ BİTİRİR (park eder), sonra yeniden uzlaştırılır (gerekirse çıkış
+// aracı doğar). Böylece "yoldayken kaybolan", "yoktan var olan", "vardan yok olan"
+// hayalet araçlar oluşmaz: her araç ya park eder ya çıkışa gider.
+function reconcile(id){
+  if(mover[id]) return;                       // animasyon sürüyor; bittiğinde tekrar çağrılır
+  const want=!!targetOcc[id], have=!!vocc[id];
+  if(want===have) return;
+  if(want) startArrival(id); else startDeparture(id);
 }
-function spawnArrival(spotId){
-  // Üst üste park YOK: yer zaten doluysa ya da oraya giden araç varsa yeni varış spawn etme.
-  if(vocc[spotId] || arriving[spotId]) return;
-  const sp=spotById[spotId];
-  // Slot dolu ya da yol yoksa: pat diye belirme yerine yumuşak beliriş (nadir; aşağıda yol her zaman bulunur)
-  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeIn(spotId); return; }
+function startArrival(id){
+  const sp=spotById[id];
+  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ vocc[id]=true; return; }
   const path=dijkstra(rand(entranceIds), sp.access);
-  if(!path){ fadeIn(spotId); return; }
-  delete fades[spotId];
-  arriving[spotId]=true;
-  // Araç yere VARINCA park eder (yer hâlâ "gelen" olarak işaretliyse; yoksa boşalmış demektir)
-  cars.push(new EventCar(path.concat([[sp.x,sp.y]]), ()=>{
-    if(arriving[spotId]){ delete arriving[spotId]; vocc[spotId]=true; }
-  }));
+  if(!path){ vocc[id]=true; return; }
+  mover[id]='in';
+  cars.push(new EventCar(path.concat([[sp.x,sp.y]]),
+            ()=>{ vocc[id]=true; mover[id]=undefined; reconcile(id); }, true));
 }
-function spawnDeparture(spotId){
-  delete arriving[spotId];                          // o yere giden araç varsa iptal (yer boşaldı)
-  if(!vocc[spotId] && !fades[spotId]) return;       // zaten boş -> çıkacak araç yok (hayalet çıkış engellenir)
-  const sp=spotById[spotId];
-  // Slot dolu ya da yol yoksa: pat diye silme yerine yumuşak sönüş
-  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeOut(spotId); return; }
+function startDeparture(id){
+  const sp=spotById[id];
+  vocc[id]=false;                              // araç yerden ayrılıyor -> park görseli kalkar
+  if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ return; }
   const path=dijkstra(sp.access, rand(vexitIds));
-  if(path){ delete fades[spotId]; vocc[spotId]=false; cars.push(new EventCar([[sp.x,sp.y]].concat(path), null)); }
-  else fadeOut(spotId);
+  if(!path){ return; }
+  mover[id]='out';
+  cars.push(new EventCar([[sp.x,sp.y]].concat(path),
+            ()=>{ mover[id]=undefined; reconcile(id); }, false));
 }
 
 /* ---------- yönlendirilen araç ---------- */
@@ -330,8 +325,7 @@ function drawSpots(now){
     ctx.strokeStyle=C.paint; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,y);ctx.lineTo(x,y+sh); ctx.moveTo(x+sw,y);ctx.lineTo(x+sw,y+sh);
     const by=upper?y+sh:y; ctx.moveTo(x,by);ctx.lineTo(x+sw,by); ctx.stroke();
-    const a=carAlpha(s.id, now);
-    if(a>0){ ctx.globalAlpha=a; drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw); ctx.globalAlpha=1; }
+    if(vocc[s.id]){ drawCar(cx,cy,upper?-Math.PI/2:Math.PI/2,hashColor(s.id),cl,cw); }
     else if(s.type==="ev_charging"){ ctx.strokeStyle=C.ev;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); bolt(cx,cy,Math.min(sw,sh)*0.32); }
     else if(s.type==="disabled"){ ctx.strokeStyle=C.disabled;ctx.lineWidth=2;rr(x+1,y+1,sw-2,sh-2,2);ctx.stroke(); wheelchair(cx,cy,Math.min(sw,sh)*0.3); }
     // Rezerve (dolu değil): turuncu kesikli çerçeve + R
@@ -444,11 +438,12 @@ function applyState(d, animate){
     clockEl.textContent=`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}  ·  Yoğunluk: ${d.sim.busy}`; }
   reservedMap = d.reserved || {};
   updateSysRow(d);
-  if(!animate || prevOcc===null){ vocc={...d.occupancy}; prevOcc=d.occupancy; return; }  // baz kare: animasyonsuz
-  for(const id in d.occupancy){
-    const now=d.occupancy[id], was=prevOcc[id];
-    if(now && !was) spawnArrival(id);        // yeni doldu -> araç gelir
-    else if(!now && was) spawnDeparture(id); // boşaldı -> araç gider
+  if(!animate || prevOcc===null){            // baz kare: animasyonsuz (hedef = görsel)
+    vocc={...d.occupancy}; targetOcc={...d.occupancy}; mover={}; prevOcc=d.occupancy; return;
+  }
+  for(const id in d.occupancy){              // hedefi güncelle, görseli ona uzlaştır
+    targetOcc[id]=d.occupancy[id];
+    reconcile(id);
   }
   prevOcc=d.occupancy;
 }
