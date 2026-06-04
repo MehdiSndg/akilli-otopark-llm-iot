@@ -318,8 +318,15 @@ function drawSpots(now){
   const pulse=0.5+0.5*Math.sin(now/240);
   for(const s of L.spots){
     const [cx,cy]=S(s.x,s.y), x=cx-sw/2, y=cy-sh/2, upper=s.face==="up";
-    // Isı haritası modunda boş yuvalar kullanım sıklığına göre renklenir
-    ctx.fillStyle = (heatmapOn && !vocc[s.id]) ? heatColor(heatData[s.id]||0) : C.slot;
+    // Isı haritası modu: TÜM yerler kullanım sıklığına göre boyanır (araç gizlenir -> saf ısı haritası)
+    if(heatmapOn){
+      const used=heatData[s.id]||0;
+      ctx.fillStyle = used>0 ? heatColor(used) : "rgba(74,84,104,0.5)";
+      rr(x,y,sw,sh,2); ctx.fill();
+      if(routes.some(r=>r.spotId===s.id)){ ctx.strokeStyle=`rgba(245,200,70,${0.5+0.5*pulse})`; ctx.lineWidth=3; rr(x-4,y-4,sw+8,sh+8,5); ctx.stroke(); }
+      continue;
+    }
+    ctx.fillStyle = C.slot;
     rr(x,y,sw,sh,2); ctx.fill();
     ctx.strokeStyle=C.paint; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,y);ctx.lineTo(x,y+sh); ctx.moveTo(x+sw,y);ctx.lineTo(x+sw,y+sh);
@@ -342,11 +349,13 @@ function drawSpots(now){
   }
 }
 
-// Isı haritası rengi: düşük=mavi, orta=sarı, yüksek=kırmızı (kullanım sıklığı)
+// Isı haritası rengi — çok-duraklı geçiş: az(soğuk mavi) -> çok(sıcak kırmızı)
+const HEAT_STOPS=[[46,58,82],[42,118,176],[70,190,140],[245,200,70],[226,96,80]];
 function heatColor(v){
-  const m = heatMax || 1, t = Math.min(1, v/m);
-  const r = Math.round(40 + t*200), g = Math.round(70 + (1-Math.abs(t-0.5)*2)*120), b = Math.round(180*(1-t)+40);
-  return `rgb(${r},${g},${b})`;
+  const t = Math.min(1, heatMax ? v/heatMax : 0);
+  const f = t*(HEAT_STOPS.length-1), i = Math.min(HEAT_STOPS.length-2, Math.floor(f)), k = f-i;
+  const a=HEAT_STOPS[i], b=HEAT_STOPS[i+1], ch=j=>Math.round(a[j]+(b[j]-a[j])*k);
+  return `rgb(${ch(0)},${ch(1)},${ch(2)})`;
 }
 function drawGates(){
   ctx.textAlign="center"; ctx.font=`700 ${Math.max(T.scale*0.6,11)}px "Segoe UI",sans-serif`;
@@ -564,42 +573,83 @@ async function openAnalytics(){
   overlay.hidden=false;
   try{
     const a=await (await fetch("/api/analytics")).json();
-    const peak = a.timeseries.length ? Math.max(...a.timeseries.map(p=>p.occupied)) : 0;
-    const total = a.timeseries.length ? a.timeseries[a.timeseries.length-1].total : 0;
-    document.getElementById("analytics-metrics").innerHTML = [
-      [`${a.avg_stay_minutes} dk`, "Ort. kalış (simüle)"],
-      [`${peak}`, "Zirve doluluk"],
-      [`${a.sections.length}`, "Bölge"],
-      [`${total}`, "Toplam yer"],
-    ].map(([v,l])=>`<div class="metric"><span class="mv">${v}</span><span class="ml">${l}</span></div>`).join("");
-    drawTimeChart(a.timeseries);
+    const ts=a.timeseries||[];
+    const last=ts.length?ts[ts.length-1]:{occupied:0,total:240};
+    const total=last.total||240;
+    const nowPct=total?Math.round(last.occupied/total*100):0;
+    const peakPct=ts.length?Math.round(Math.max(...ts.map(p=>p.occupied))/total*100):0;
+    const busiest=(a.sections||[]).slice().sort((x,y)=>y.rate-x.rate)[0];
+    const moves=Object.values(a.heatmap||{}).reduce((s,v)=>s+v,0);
+    const M=[
+      ["🚗", nowPct+"%", "Şu anki doluluk", "#6cb8ee"],
+      ["⏱️", a.avg_stay_minutes+" dk", "Ort. kalış (simüle)", "#62c8a8"],
+      ["📈", peakPct+"%", "Zirve doluluk", "#f5c846"],
+      ["🔥", busiest?(busiest.section+" · %"+Math.round(busiest.rate*100)):"—", "En yoğun bölge", "#e2685a"],
+      ["🅿️", moves.toLocaleString("tr-TR"), "Toplam park hareketi", "#9a8cf0"],
+    ];
+    document.getElementById("analytics-metrics").innerHTML = M.map(([ic,v,l,col])=>
+      `<div class="metric" style="border-left-color:${col}"><span class="mv"><span class="mi">${ic}</span>${v}</span><span class="ml">${l}</span></div>`).join("");
+    drawTimeChart(ts);
     drawSectionChart(a.sections);
   }catch(e){ document.getElementById("analytics-metrics").innerHTML = "Analitik alınamadı: "+e.message; }
 }
 function _fit(cv, cssH){ const r=cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
   cv.width=Math.max(1,r.width)*dpr; cv.height=cssH*dpr; cv.style.height=cssH+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); return [c, r.width||cv.width/dpr, cssH]; }
-function drawTimeChart(ts){
-  const cv=document.getElementById("chart-time"); const [c,W,H]=_fit(cv,150);
-  c.clearRect(0,0,W,H); if(!ts.length){ return; }
-  const total=ts[0].total||1, pad=8;
-  c.strokeStyle="#4aa2de"; c.lineWidth=2; c.beginPath();
-  ts.forEach((p,i)=>{ const x=pad+(W-2*pad)*i/Math.max(1,ts.length-1), y=H-pad-(H-2*pad)*(p.occupied/total);
-    i?c.lineTo(x,y):c.moveTo(x,y); });
-  c.stroke();
-  c.strokeStyle="rgba(255,255,255,.08)"; c.beginPath(); c.moveTo(pad,H-pad); c.lineTo(W-pad,H-pad); c.stroke();
-  c.fillStyle="#8a92a4"; c.font="11px sans-serif"; c.textAlign="left";
-  c.fillText("%"+Math.round(ts[ts.length-1].occupied/total*100)+" doluluk (son)", pad, 12);
+function _grid(c, x0, x1, y0, y1){          // %0–100 yatay ızgara + sol eksen etiketleri
+  c.font="10px 'Segoe UI',sans-serif"; c.textAlign="right"; c.textBaseline="middle";
+  for(let g=0; g<=4; g++){
+    const yy=y1-(y1-y0)*(g/4);
+    c.strokeStyle="rgba(255,255,255,0.06)"; c.lineWidth=1;
+    c.beginPath(); c.moveTo(x0,yy); c.lineTo(x1,yy); c.stroke();
+    c.fillStyle="rgba(170,178,196,0.7)"; c.fillText((g*25)+"%", x0-6, yy);
+  }
 }
+function drawTimeChart(ts){
+  const cv=document.getElementById("chart-time"); const [c,W,H]=_fit(cv,160);
+  c.clearRect(0,0,W,H);
+  const x0=36, x1=W-12, y0=14, y1=H-18;
+  _grid(c, x0, x1, y0, y1);
+  if(!ts.length) return;
+  const total=ts[0].total||1, n=ts.length;
+  const px=i=>x0+(x1-x0)*i/Math.max(1,n-1);
+  const py=v=>y1-(y1-y0)*Math.min(1, v/total);
+  // gradyan alan dolgusu
+  const grad=c.createLinearGradient(0,y0,0,y1);
+  grad.addColorStop(0,"rgba(108,184,238,0.42)"); grad.addColorStop(1,"rgba(108,184,238,0.02)");
+  c.beginPath(); c.moveTo(px(0),y1);
+  ts.forEach((p,i)=>c.lineTo(px(i),py(p.occupied)));
+  c.lineTo(px(n-1),y1); c.closePath(); c.fillStyle=grad; c.fill();
+  // çizgi
+  c.beginPath(); ts.forEach((p,i)=>{ const X=px(i),Y=py(p.occupied); i?c.lineTo(X,Y):c.moveTo(X,Y); });
+  c.strokeStyle="#6cb8ee"; c.lineWidth=2; c.lineJoin="round"; c.stroke();
+  // son nokta + değer balonu
+  const last=ts[n-1], lx=px(n-1), ly=py(last.occupied);
+  c.fillStyle="#6cb8ee"; c.beginPath(); c.arc(lx,ly,3.5,0,7); c.fill();
+  c.fillStyle="#e6eaf2"; c.font="700 11px 'Segoe UI',sans-serif"; c.textAlign="right"; c.textBaseline="bottom";
+  c.fillText(Math.round(last.occupied/total*100)+"% ("+last.occupied+")", lx-3, ly-5);
+  // x ekseni: eski -> şimdi
+  c.fillStyle="rgba(170,178,196,0.6)"; c.font="10px 'Segoe UI',sans-serif"; c.textBaseline="top";
+  c.textAlign="left"; c.fillText("← eski", x0, y1+4);
+  c.textAlign="right"; c.fillText("şimdi", x1, y1+4);
+}
+function levelColor(rate){ return rate>=0.7 ? "#e2685a" : (rate>=0.4 ? "#f5c846" : "#6cd08a"); }
 function drawSectionChart(secs){
-  const cv=document.getElementById("chart-sections"); const [c,W,H]=_fit(cv,150);
-  c.clearRect(0,0,W,H); if(!secs.length) return;
-  const pad=8, bw=(W-2*pad)/secs.length*0.6, gap=(W-2*pad)/secs.length;
-  secs.forEach((s,i)=>{ const x=pad+gap*i+gap*0.2, h=(H-2*pad-14)*s.rate, y=H-pad-h;
-    c.fillStyle="#4aa2de"; rrc(c,x,y,bw,h,3); c.fill();
-    c.fillStyle="#e4e8f0"; c.font="11px sans-serif"; c.textAlign="center";
-    c.fillText(s.section, x+bw/2, H-pad+11);
-    c.fillStyle="#8a92a4"; c.fillText("%"+Math.round(s.rate*100), x+bw/2, y-3); });
+  const cv=document.getElementById("chart-sections"); const [c,W,H]=_fit(cv,160);
+  c.clearRect(0,0,W,H); if(!secs||!secs.length) return;
+  const x0=36, x1=W-12, y0=16, y1=H-28;
+  _grid(c, x0, x1, y0, y1);
+  const gap=(x1-x0)/secs.length, bw=gap*0.5;
+  secs.forEach((s,i)=>{
+    const bx=x0+gap*i+(gap-bw)/2, h=(y1-y0)*s.rate, by=y1-h;
+    c.fillStyle=levelColor(s.rate); rrc(c,bx,by,bw,Math.max(h,2),3); c.fill();
+    c.fillStyle="#e6eaf2"; c.font="700 11px 'Segoe UI',sans-serif"; c.textAlign="center"; c.textBaseline="bottom";
+    c.fillText(Math.round(s.rate*100)+"%", bx+bw/2, by-3);
+    c.fillStyle="rgba(214,222,236,0.9)"; c.font="700 12px 'Segoe UI',sans-serif"; c.textBaseline="top";
+    c.fillText(s.section, bx+bw/2, y1+5);
+    c.fillStyle="rgba(170,178,196,0.7)"; c.font="10px 'Segoe UI',sans-serif";
+    c.fillText(s.occupied+"/"+s.total, bx+bw/2, y1+19);
+  });
 }
 function rrc(c,x,y,w,h,r){ r=Math.min(r,w/2,h/2); c.beginPath();
   c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
@@ -607,13 +657,17 @@ function rrc(c,x,y,w,h,r){ r=Math.min(r,w/2,h/2); c.beginPath();
 
 /* ---------- Isı haritası ---------- */
 const heatBtn=document.getElementById("heatmap-btn");
+const heatLegend=document.getElementById("heat-legend"), heatMaxEl=document.getElementById("hl-max");
 heatBtn.onclick=async ()=>{
   heatmapOn=!heatmapOn; heatBtn.classList.toggle("on", heatmapOn);
   if(heatmapOn){
     try{ const a=await (await fetch("/api/analytics")).json();
-      heatData=a.heatmap||{}; heatMax=Math.max(1, ...Object.values(heatData)); }
+      heatData=a.heatmap||{}; heatMax=Math.max(1, ...Object.values(heatData));
+      if(heatMaxEl) heatMaxEl.textContent=`çok (${heatMax}×)`;
+      if(heatLegend) heatLegend.hidden=false;
+    }
     catch(e){ heatmapOn=false; heatBtn.classList.remove("on"); }
-  }
+  } else if(heatLegend){ heatLegend.hidden=true; }
 };
 
 /* ---------- Sesli giriş (Web Speech API) ---------- */

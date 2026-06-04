@@ -13,6 +13,13 @@
       <canvas id="lot"></canvas>
       <div class="legend" id="legend"></div>
 
+      <!-- Isı haritası lejantı (yalnız ısı haritası açıkken görünür) -->
+      <div class="heat-legend" id="heat-legend" hidden>
+        <span class="hl-title">🔥 Kullanım yoğunluğu</span>
+        <div class="hl-bar"></div>
+        <div class="hl-labels"><span>az</span><span id="hl-max">çok</span></div>
+      </div>
+
       <!-- Analitik kaplama (gizli; "Analitik" butonu açar) -->
       <div class="overlay" id="analytics" hidden>
         <div class="overlay-head">

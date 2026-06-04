@@ -46,16 +46,29 @@ html, body {
 
 .legend {
   position: absolute;
-  left: 16px; bottom: 14px;
-  display: flex; flex-wrap: wrap; gap: 8px 16px;
-  padding: 10px 14px;
+  left: 14px; bottom: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px;
   background: rgba(18,20,27,.72);
   backdrop-filter: blur(6px);
   border-radius: 10px;
-  font-size: 12.5px; color: var(--text-dim);
+  font-size: 12px; color: var(--text-dim);
 }
 .legend .item { display: flex; align-items: center; gap: 7px; }
 .legend .sw { width: 13px; height: 13px; border-radius: 3px; }
+
+/* Isı haritası lejantı */
+.heat-legend {
+  position: absolute; top: 16px; right: 16px; z-index: 4;
+  background: rgba(18,20,27,.82); backdrop-filter: blur(6px);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 196px;
+}
+.heat-legend .hl-title { display: block; font-size: 12px; color: var(--text); font-weight: 600; margin-bottom: 8px; }
+.heat-legend .hl-bar {
+  height: 10px; border-radius: 5px;
+  background: linear-gradient(90deg,#2e3a52,#2a76b0,#46be8c,#f5c846,#e2605a);
+}
+.heat-legend .hl-labels { display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: var(--text-dim); }
 
 /* Sağ panel — asistan */
 .side {
@@ -170,6 +183,7 @@ html, body {
   padding: 14px 16px; border-left: 3px solid var(--accent);
 }
 .metric .mv { display: block; font-size: 22px; font-weight: 700; }
+.metric .mv .mi { font-size: 16px; margin-right: 6px; opacity: .9; }
 .metric .ml { color: var(--text-dim); font-size: 12.5px; }
 .chart-block { background: var(--card); border-radius: 12px; padding: 12px 14px; }
 .chart-title { display: block; color: var(--text-dim); font-size: 13px; margin-bottom: 8px; }
