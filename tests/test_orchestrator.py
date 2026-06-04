@@ -137,8 +137,9 @@ def test_avm_entrance_maps_to_nearest_mall():
     assert out2["params"]["preference"] == "nearest_entrance"
 
 
-def test_quota_error_falls_back_with_note():
-    # LLM 429 (kota) verirse: keyword yedeği + cevapta nazik kota notu olmalı
+def test_quota_error_falls_back_cleanly():
+    # LLM 429 (kota) verirse: keyword yedeği devreye girer, explain ÇAĞRILMAZ ve
+    # cevapta "kota doldu" gibi bir not GÖSTERİLMEZ (temiz cevap).
     spots = _spots_with_free({"A-10"})
 
     class QuotaClient(LLMClient):
@@ -151,7 +152,8 @@ def test_quota_error_falls_back_with_note():
     out = orchestrator.handle_request("elektrikli yer", spots=spots, client=QuotaClient())
     assert out["source"] == "fallback"
     assert out["result"]["spot"]["type"] == "ev_charging"
-    assert "kota" in out["reply"].lower()
+    assert out["reply"]                       # nazik cevap var
+    assert "kota" not in out["reply"].lower()  # ama kota notu YOK
 
 
 def test_entrance_passed_through_to_allocator():

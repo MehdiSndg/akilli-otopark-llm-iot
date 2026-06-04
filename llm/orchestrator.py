@@ -230,8 +230,6 @@ def _handle_find(user_text, args, spots, entrance, client, source, llm_failed, q
     # Açıklama: LLM başarısızsa/kapalıysa ya da belirli yer istendiyse şablon; değilse LLM
     if llm_failed or not config.LLM_EXPLAIN or requested:
         reply = _fallback_explanation(result, params)
-        if quota_hit:
-            reply = "(LLM günlük kotası doldu, basit modda yanıtlıyorum.) " + reply
     else:
         try:
             reply = client.explain(user_text, result, params)
@@ -277,8 +275,6 @@ def _handle_stats(args, source, quota_hit):
     else:
         reply = (f"Otoparkta {total} yerin {occ} tanesi dolu (%{pct}), {empty} yer boş. "
                  f"Bunların {free_ev}'i şarjlı, {free_dis}'i engelli yeri.")
-    if quota_hit:
-        reply = "(LLM kotası doldu, basit modda.) " + reply
     return {"reply": reply, "result": None,
             "params": {"intent": "stats", "vehicle_type": vt},
             "source": source,
@@ -291,8 +287,6 @@ def _handle_predict(args, user_text, source, quota_hit):
     horizon = _coerce_int((args or {}).get("horizon_min")) or _extract_horizon(user_text) or 15
     pred = predict.predict(horizon_min=horizon)
     reply = pred["advice"]
-    if quota_hit:
-        reply = "(LLM kotası doldu, basit modda.) " + reply
     return {"reply": reply, "result": None,
             "params": {"intent": "predict", "horizon_min": horizon},
             "source": source, "prediction": pred}
