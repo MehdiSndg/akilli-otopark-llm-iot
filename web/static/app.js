@@ -27,6 +27,7 @@ let vocc = {};          // görsel doluluk (animasyon gecikmeli)
 let prevOcc = null;     // bir önceki gerçek doluluk (fark hesaplamak için)
 let cars = [];          // gerçek olaylarla tetiklenen hareketli araçlar
 let fades = {};         // spot_id -> {dir:+1 beliriş / -1 sönüş, t0} (animasyon slotu doluysa yumuşak geçiş)
+let arriving = {};      // spot_id -> true: o yere giden (animasyonu süren) araç var -> üst üste park engellenir
 let spotById = {};
 let entranceId = null;
 let aisleIds = [], entranceIds = [], vexitIds = [];
@@ -152,10 +153,11 @@ class EventCar {
   }
 }
 // Aynı anda EKRANDA hareket eden araç sınırı (slot) — otopark doluluğuyla İLGİSİ YOK.
-// Devirsiz (sadece gün eğrisi) düzende eşzamanlı araç sayısı düşüktür; 100 bol gelir,
-// normalde hiçbir araç pat diye silinmez. Aşılırsa (nadir tepe-yoğunluk burst'ü) araç
-// yumuşak fade ile geçer. (Deadlock imkânsız: applyTraffic min hız 0.15 + life>16.)
-const MAX_CARS = 100;
+// Yüksek tutulur ki HER giriş/çıkış gerçekten sürerek olsun; araç ne pat diye belirir
+// ne pat diye silinir. Tüm 240 yer erişilebilir (yol her zaman bulunur), bu yüzden fade
+// pratikte hiç tetiklenmez; yalnız teorik bir emniyet sübabıdır. (Deadlock imkânsız:
+// applyTraffic min hız 0.15 + life>16 emniyeti; perf: ~100 sprite Canvas için sorunsuz.)
+const MAX_CARS = 250;
 const FADE_MS = 450;
 function fadeIn(id){  vocc[id]=true;  fades[id]={dir:1,  t0:performance.now()}; }  // yumuşak beliriş
 function fadeOut(id){ vocc[id]=false; fades[id]={dir:-1, t0:performance.now()}; }  // yumuşak sönüş
@@ -168,15 +170,23 @@ function carAlpha(id, now){
   return f.dir>0 ? k : (1-k);
 }
 function spawnArrival(spotId){
+  // Üst üste park YOK: yer zaten doluysa ya da oraya giden araç varsa yeni varış spawn etme.
+  if(vocc[spotId] || arriving[spotId]) return;
   const sp=spotById[spotId];
-  // Slot dolu ya da yol yoksa: pat diye belirme yerine yumuşak beliriş
+  // Slot dolu ya da yol yoksa: pat diye belirme yerine yumuşak beliriş (nadir; aşağıda yol her zaman bulunur)
   if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeIn(spotId); return; }
   const path=dijkstra(rand(entranceIds), sp.access);
   if(!path){ fadeIn(spotId); return; }
   delete fades[spotId];
-  cars.push(new EventCar(path.concat([[sp.x,sp.y]]), ()=>{ vocc[spotId]=true; }));
+  arriving[spotId]=true;
+  // Araç yere VARINCA park eder (yer hâlâ "gelen" olarak işaretliyse; yoksa boşalmış demektir)
+  cars.push(new EventCar(path.concat([[sp.x,sp.y]]), ()=>{
+    if(arriving[spotId]){ delete arriving[spotId]; vocc[spotId]=true; }
+  }));
 }
 function spawnDeparture(spotId){
+  delete arriving[spotId];                          // o yere giden araç varsa iptal (yer boşaldı)
+  if(!vocc[spotId] && !fades[spotId]) return;       // zaten boş -> çıkacak araç yok (hayalet çıkış engellenir)
   const sp=spotById[spotId];
   // Slot dolu ya da yol yoksa: pat diye silme yerine yumuşak sönüş
   if(cars.length>MAX_CARS || !sp || !sp.access || !L.road_nodes[sp.access]){ fadeOut(spotId); return; }
@@ -442,7 +452,9 @@ function connectWS(){
   const proto=location.protocol==="https:"?"wss":"ws";
   const ws=new WebSocket(`${proto}://${location.host}/ws`);
   ws.onmessage=(ev)=>applyState(JSON.parse(ev.data), true);
-  ws.onclose=()=>setTimeout(connectWS,1500);
+  // Bağlantı koparsa baz kareyi sıfırla: yeniden bağlanınca tüm doluluk farkı BİRDEN
+  // spawn olmasın (aksi halde onlarca araç aynı anda belirir). İlk mesaj animasyonsuz baz olur.
+  ws.onclose=()=>{ prevOcc=null; setTimeout(connectWS,1500); };
 }
 function buildLegend(){
   const items=[[C.slot,"Boş"],[CARS[0],"Dolu"],[C.ev,"Şarjlı"],[C.disabled,"Engelli"],[C.exit,"Rezerve"],[C.suggested,"Önerilen"],[C.yourCar,"Sizin aracınız"]];
